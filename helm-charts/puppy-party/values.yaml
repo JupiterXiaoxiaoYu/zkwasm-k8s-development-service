@@ -37,6 +37,7 @@ config:
     autoSubmit: ""
     migrate: "FALSE"
     image: ""
+    migrateImageValue: ""
     settlementContractAddress: ""
     rpcProvider: ""
   mongodb:
@@ -72,11 +73,6 @@ config:
 service:
   type: ClusterIP
   port: 3000
-
-# 初始化容器配置
-initContainer:
-  enabled: true
-  image: node:18-slim
 
 resources:
   limits:

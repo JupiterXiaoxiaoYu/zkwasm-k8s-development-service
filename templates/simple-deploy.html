@@ -42,6 +42,23 @@
       margin-top: 1rem;
       font-size: 1.2rem;
     }
+    .required-field label::after {
+      content: " *";
+      color: #dc3545;
+    }
+    /* MD5 input validation styling */
+    input[pattern]:valid {
+      border-color: #28a745;
+    }
+    input[pattern]:invalid:not(:placeholder-shown) {
+      border-color: #dc3545;
+    }
+    /* Help tooltip for MD5 fields */
+    .md5-info {
+      cursor: help;
+      color: #6c757d;
+      margin-left: 5px;
+    }
   </style>
 </head>
 <body>
@@ -69,6 +86,22 @@
         <li>The system now automatically adds a timestamp to image tags during upgrades to force image pulls</li>
       </ul>
       <p class="mb-0">These features help overcome Kubernetes' default behavior of not pulling images when the tag remains the same.</p>
+    </div>
+    
+    <div class="alert alert-info mb-4">
+      <h4 class="alert-heading">MD5 Image Values</h4>
+      <p>When using the advanced options, you may need to provide MD5 hash values for images:</p>
+      <ul>
+        <li><strong>Image Value (MD5)</strong>: The MD5 hash of the image to be deployed</li>
+        <li><strong>Migrate Image Value (MD5)</strong>: The MD5 hash of the image to migrate from (required when Migrate Value is TRUE)</li>
+      </ul>
+      <p>To obtain an MD5 hash for an image:</p>
+      <ol>
+        <li>Use the zkWasm CLI tool to get the image hash</li>
+        <li>Or check the zkWasm dashboard for existing image hashes</li>
+        <li>The MD5 hash should be a 32-character hexadecimal string</li>
+      </ol>
+      <p class="mb-0">These values are used for specific zkWasm operations and are required for certain deployment scenarios.</p>
     </div>
     
     <div class="card mb-4">
@@ -162,6 +195,33 @@
                     <div class="form-group">
                       <label for="autoSubmitValue">Auto Submit Value</label>
                       <input type="text" class="form-control" id="autoSubmitValue" name="autoSubmitValue" value="">
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="form-group">
+                      <label for="migrateImageValue">Migrate Image Value (MD5)</label>
+                      <input type="text" class="form-control" id="migrateImageValue" name="migrateImageValue" 
+                             placeholder="MD5 hash of the image to migrate from" 
+                             pattern="[a-fA-F0-9]{32}" 
+                             title="Please enter a valid 32-character MD5 hash">
+                      <div class="form-text text-muted">
+                        The MD5 hash of the intended image to migrate from. Required when Migrate Value is TRUE.
+                      </div>
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="form-group">
+                      <label for="imageValue">Image Value (MD5)</label>
+                      <input type="text" class="form-control" id="imageValue" name="imageValue" 
+                             placeholder="MD5 hash of the image" 
+                             pattern="[a-fA-F0-9]{32}" 
+                             title="Please enter a valid 32-character MD5 hash">
+                      <div class="form-text text-muted">
+                        The MD5 hash of the image to be deployed.
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -303,6 +363,33 @@
       }
     });
     
+    // 根据migrateValue的值显示/隐藏migrateImageValue字段
+    document.getElementById('migrateValue').addEventListener('change', function() {
+      const migrateImageValueField = document.getElementById('migrateImageValue');
+      const migrateImageValueContainer = migrateImageValueField.closest('.form-group');
+      
+      if (this.value === 'TRUE') {
+        migrateImageValueContainer.classList.add('required-field');
+        migrateImageValueField.setAttribute('required', 'required');
+        // 高亮显示字段
+        migrateImageValueField.style.borderColor = '#ffc107';
+      } else {
+        migrateImageValueContainer.classList.remove('required-field');
+        migrateImageValueField.removeAttribute('required');
+        // 恢复默认边框颜色
+        migrateImageValueField.style.borderColor = '';
+      }
+    });
+    
+    // 页面加载时初始化migrateImageValue字段状态
+    document.addEventListener('DOMContentLoaded', function() {
+      const migrateValue = document.getElementById('migrateValue');
+      if (migrateValue) {
+        // 触发change事件以初始化状态
+        migrateValue.dispatchEvent(new Event('change'));
+      }
+    });
+    
     // 显示清理部分
     function showCleanupSection(namespace, releaseName) {
       const cleanupSection = document.getElementById('cleanupSection');
@@ -357,6 +444,32 @@
     document.getElementById('deployForm').addEventListener('submit', async function(e) {
       e.preventDefault();
       
+      // 验证MD5值格式
+      const migrateValue = document.getElementById('migrateValue').value;
+      const migrateImageValue = document.getElementById('migrateImageValue').value;
+      const imageValue = document.getElementById('imageValue').value;
+      
+      // 如果migrateValue为TRUE，则migrateImageValue必填
+      if (migrateValue === 'TRUE' && !migrateImageValue) {
+        alert('Migrate Image Value (MD5) is required when Migrate Value is TRUE');
+        document.getElementById('migrateImageValue').focus();
+        return;
+      }
+      
+      // 验证MD5格式
+      const md5Regex = /^[a-fA-F0-9]{32}$/;
+      if (migrateImageValue && !md5Regex.test(migrateImageValue)) {
+        alert('Migrate Image Value must be a valid 32-character MD5 hash');
+        document.getElementById('migrateImageValue').focus();
+        return;
+      }
+      
+      if (imageValue && !md5Regex.test(imageValue)) {
+        alert('Image Value must be a valid 32-character MD5 hash');
+        document.getElementById('imageValue').focus();
+        return;
+      }
+      
       // 显示加载中
       document.getElementById('loadingOverlay').classList.remove('d-none');
       
@@ -378,6 +491,8 @@
           deployValue: formData.get('deployValue'),
           remoteValue: formData.get('remoteValue'),
           migrateValue: formData.get('migrateValue'),
+          migrateImageValue: formData.get('migrateImageValue'),
+          imageValue: formData.get('imageValue'),
           autoSubmitValue: formData.get('autoSubmitValue'),
           settlementContractAddress: formData.get('settlementContractAddress'),
           rpcProvider: formData.get('rpcProvider')

@@ -41,7 +41,7 @@ const generateHelmChart = (envVars) => {
         scriptContent += `export ${key}='${escapedValue}'\n`;
         
         // 打印关键环境变量的值
-        if (key === 'CHART_NAME' || key === 'GITHUB_OWNER' || key === 'IMAGE_VALUE') {
+        if (key === 'CHART_NAME' || key === 'GITHUB_OWNER') {
           console.log(`Setting ${key}='${escapedValue}'`);
         } else if (key === 'SANITY_TOKEN' || key === 'SERVER_ADMIN_KEY') {
           // 只打印特定的自定义环境变量
@@ -168,6 +168,11 @@ const deployHelmChart = (chartPath, releaseName, namespace, values = {}, upgrade
         console.warn(`Error checking for in-progress operations: ${cleanupError.message}, proceeding anyway...`);
       }
     }
+    
+    // 打印关键环境变量的值
+    console.log(`Deploying Helm chart with values:`);
+    console.log(`IMAGE_VALUE: "${values.config?.app?.image || ''}"`);
+    console.log(`MIGRATE_IMAGE_VALUE: "${values.config?.app?.migrateImageValue || ''}"`);
     
     // 创建临时值文件
     const tempValuesPath = path.join(os.tmpdir(), `${releaseName}-values.yaml`);

@@ -297,7 +297,7 @@ router.post('/deploy-from-github', async (req, res) => {
       AUTO_SUBMIT_VALUE: envVars.autoSubmitValue || "",
       MIGRATE_VALUE: envVars.migrateValue || "FALSE",
       MIGRATE_IMAGE_VALUE: envVars.migrateImageValue || "",
-      IMAGE_VALUE: imageTag,
+      IMAGE_VALUE: envVars.imageValue || "",
       SETTLEMENT_CONTRACT_ADDRESS: envVars.settlementContractAddress || "",
       RPC_PROVIDER: envVars.rpcProvider || "",
     };
@@ -361,7 +361,10 @@ router.post('/deploy-from-github', async (req, res) => {
           ...(existingValues.config || {}),
           app: {
             ...(existingValues.config?.app || {}),
-            ...values.config?.app // 保留我们之前设置的自定义环境变量
+            ...values.config?.app, // 保留我们之前设置的自定义环境变量
+            // 确保IMAGE_VALUE和MIGRATE_IMAGE_VALUE被正确设置
+            image: envVars.imageValue || existingValues.config?.app?.image || "",
+            migrateImageValue: envVars.migrateImageValue || existingValues.config?.app?.migrateImageValue || ""
           }
         }
       };
@@ -430,6 +433,23 @@ router.post('/deploy-from-github', async (req, res) => {
           repository: `ghcr.io/${owner.toLowerCase()}/${chartName}`,
           tag: imageTag,
           pullPolicy: 'Always'
+        },
+        // 确保config.app存在并包含必要的值
+        config: {
+          ...(values.config || {}),
+          app: {
+            ...(values.config?.app || {}),
+            // 确保IMAGE_VALUE和MIGRATE_IMAGE_VALUE被正确设置
+            image: envVars.imageValue || "",
+            migrateImageValue: envVars.migrateImageValue || "",
+            // 设置其他环境变量
+            deploy: envVars.deployValue || "TRUE",
+            remote: envVars.remoteValue || "TRUE",
+            autoSubmit: envVars.autoSubmitValue || "",
+            migrate: envVars.migrateValue || "FALSE",
+            settlementContractAddress: envVars.settlementContractAddress || "",
+            rpcProvider: envVars.rpcProvider || ""
+          }
         }
       };
       
@@ -475,6 +495,10 @@ router.post('/deploy-from-github', async (req, res) => {
     } else {
       console.log(`No custom environment variables in final values`);
     }
+    
+    // 打印IMAGE_VALUE和MIGRATE_IMAGE_VALUE的值
+    console.log(`IMAGE_VALUE in values: "${values.config?.app?.image || ''}"`);
+    console.log(`MIGRATE_IMAGE_VALUE in values: "${values.config?.app?.migrateImageValue || ''}"`);
     
     // 打印完整的values对象，用于调试
     console.log(`Complete values object:`, JSON.stringify(values, null, 2));

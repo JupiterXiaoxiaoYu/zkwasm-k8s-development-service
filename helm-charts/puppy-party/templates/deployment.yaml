@@ -17,16 +17,6 @@ spec:
       # 添加 Pod 级别的 securityContext
       securityContext:
         fsGroup: 1000
-      # 添加 initContainer 来创建必要的目录并设置权限
-      initContainers:
-      - name: init-uploads-dir
-        image: "{{ .Values.initContainer.image }}"
-        command: ["sh", "-c", "mkdir -p /app/uploads && chmod -R 777 /app/uploads && chown -R 1000:1000 /app/uploads"]
-        securityContext:
-          runAsUser: 0  # 以 root 用户运行 initContainer
-        volumeMounts:
-        - name: app-data
-          mountPath: /app
       containers:
       - name: app
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -38,6 +28,11 @@ spec:
           runAsUser: 1000
           runAsGroup: 1000
           allowPrivilegeEscalation: false
+        # 添加 lifecycle hook 来创建必要的目录
+        lifecycle:
+          postStart:
+            exec:
+              command: ["/bin/sh", "-c", "mkdir -p /app/uploads"]
         env:
         - name: URI
           value: mongodb://{{ include "puppy-party.fullname" . }}-mongodb:{{ .Values.config.mongodb.port }}
@@ -75,6 +70,8 @@ spec:
           value: "{{ .Values.config.app.migrate | default "" }}"
         - name: IMAGE
           value: "{{ .Values.config.app.image | default "" }}"
+        - name: MIGRATE_IMAGE_VALUE
+          value: "{{ .Values.config.app.migrateImageValue | default "" }}"
         - name: SETTLEMENT_CONTRACT_ADDRESS
           value: "{{ .Values.config.app.settlementContractAddress | default "" }}"
         - name: RPC_PROVIDER

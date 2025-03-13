@@ -126,6 +126,7 @@ config:
     autoSubmit: "${AUTO_SUBMIT_VALUE}"
     migrate: "${MIGRATE_VALUE}"
     image: "${IMAGE_VALUE}"
+    migrateImageValue: "${MIGRATE_IMAGE_VALUE}"
     settlementContractAddress: "${SETTLEMENT_CONTRACT_ADDRESS}"
     rpcProvider: "${RPC_PROVIDER}"
   mongodb:
@@ -161,11 +162,6 @@ config:
 service:
   type: ClusterIP
   port: 3000
-
-# 初始化容器配置
-initContainer:
-  enabled: true
-  image: node:18-slim
 
 resources:
   limits:
@@ -281,16 +277,6 @@ spec:
       # 添加 Pod 级别的 securityContext
       securityContext:
         fsGroup: 1000
-      # 添加 initContainer 来创建必要的目录并设置权限
-      initContainers:
-      - name: init-uploads-dir
-        image: "{{ .Values.initContainer.image }}"
-        command: ["sh", "-c", "mkdir -p /app/uploads && chmod -R 777 /app/uploads && chown -R 1000:1000 /app/uploads"]
-        securityContext:
-          runAsUser: 0  # 以 root 用户运行 initContainer
-        volumeMounts:
-        - name: app-data
-          mountPath: /app
       containers:
       - name: app
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -302,6 +288,11 @@ spec:
           runAsUser: 1000
           runAsGroup: 1000
           allowPrivilegeEscalation: false
+        # 添加 lifecycle hook 来创建必要的目录
+        lifecycle:
+          postStart:
+            exec:
+              command: ["/bin/sh", "-c", "mkdir -p /app/uploads"]
         env:
         - name: URI
           value: mongodb://{{ include "${CHART_NAME}.fullname" . }}-mongodb:{{ .Values.config.mongodb.port }}
@@ -339,6 +330,8 @@ spec:
           value: "{{ .Values.config.app.migrate | default "" }}"
         - name: IMAGE
           value: "{{ .Values.config.app.image | default "" }}"
+        - name: MIGRATE_IMAGE_VALUE
+          value: "{{ .Values.config.app.migrateImageValue | default "" }}"
         - name: SETTLEMENT_CONTRACT_ADDRESS
           value: "{{ .Values.config.app.settlementContractAddress | default "" }}"
         - name: RPC_PROVIDER
@@ -640,7 +633,7 @@ EOL
 
 mkdir -p ts
 
-cat > ts/publish.sh << EOL
+cat > src/scripts/publish.sh << EOL
 #!/bin/bash
 
 # 加载环境变量
@@ -669,7 +662,7 @@ fi
 eval \${PUBLISH_CMD}
 EOL
 
-chmod +x ts/publish.sh
+chmod +x src/scripts/publish.sh
 
 echo "Helm chart generated successfully at ${CHART_PATH}"
-echo "Publish script generated at ts/publish.sh" 
+echo "Publish script generated at src/scripts/publish.sh" 
