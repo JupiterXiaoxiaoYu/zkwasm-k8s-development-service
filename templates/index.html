@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZKWasm Deployment Service</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {
+      padding-top: 2rem;
+      padding-bottom: 2rem;
+    }
+    .card {
+      margin-bottom: 1.5rem;
+      transition: transform 0.3s;
+    }
+    .card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+    }
+    .card-link {
+      text-decoration: none;
+      color: inherit;
+    }
+    .card-link:hover {
+      text-decoration: none;
+      color: inherit;
+    }
+    .feature-icon {
+      font-size: 2rem;
+      margin-bottom: 1rem;
+    }
+    .jumbotron {
+      padding: 2rem 1rem;
+      margin-bottom: 2rem;
+      background-color: #e9ecef;
+      border-radius: 0.3rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="jumbotron text-center">
+      <h1 class="display-4">ZKWasm Deployment Service</h1>
+      <p class="lead">Deploy zkwasm applications to Kubernetes with ease</p>
+      <hr class="my-4">
+      <p>A simple service to deploy applications from GitHub to Kubernetes using Helm charts</p>
+    </div>
+    
+    <div class="row">
+      <div class="col-md-6">
+        <a href="/simple-deploy" class="card-link">
+          <div class="card h-100">
+            <div class="card-body text-center">
+              <div class="feature-icon">🚀</div>
+              <h5 class="card-title">Simple Deployment</h5>
+              <p class="card-text">Deploy directly from a GitHub repository URL with minimal configuration</p>
+              <div class="text-primary">Get Started →</div>
+            </div>
+          </div>
+        </a>
+      </div>
+      
+      <div class="col-md-6">
+        <a href="/test-k8s" class="card-link">
+          <div class="card h-100">
+            <div class="card-body text-center">
+              <div class="feature-icon">🔍</div>
+              <h5 class="card-title">Test Kubernetes Connection</h5>
+              <p class="card-text">Verify your Kubernetes connection and view cluster information</p>
+              <div class="text-primary">Test Connection →</div>
+            </div>
+          </div>
+        </a>
+      </div>
+    </div>
+    
+    <div class="row mt-4">
+      <div class="col-md-4">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">How It Works</h5>
+            <p class="card-text">
+              1. Enter a GitHub repository URL<br>
+              2. Specify a Kubernetes namespace<br>
+              3. The service will automatically:<br>
+              &nbsp;&nbsp;- Check for container images<br>
+              &nbsp;&nbsp;- Generate Helm charts<br>
+              &nbsp;&nbsp;- Deploy to Kubernetes
+            </p>
+          </div>
+        </div>
+      </div>
+      
+      <div class="col-md-4">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">Requirements</h5>
+            <p class="card-text">
+              <strong>GitHub Repository:</strong><br>
+              - Must have a container image published to GitHub Container Registry with the 'latest' tag<br><br>
+              <strong>Kubernetes:</strong><br>
+              - Valid kubeconfig with permissions to create and manage resources
+            </p>
+          </div>
+        </div>
+      </div>
+      
+      <div class="col-md-4">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">Advanced Options</h5>
+            <p class="card-text">
+              Need more control? The simple deployment interface includes advanced options for:
+              <ul>
+                <li>Chain ID configuration</li>
+                <li>CORS settings</li>
+                <li>Deployment modes</li>
+                <li>Custom environment variables</li>
+              </ul>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <footer class="mt-5 pt-3 text-muted text-center">
+      <p>ZKWasm Deployment Service &copy; 2023</p>
+    </footer>
+  </div>
+</body>
+</html> 

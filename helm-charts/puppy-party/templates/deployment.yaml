@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "puppy-party.fullname" . }}-rpc
+  labels:
+    {{- include "puppy-party.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "puppy-party.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "puppy-party.selectorLabels" . | nindent 8 }}
+    spec:
+      # 添加 Pod 级别的 securityContext
+      securityContext:
+        fsGroup: 1000
+      # 添加 initContainer 来创建必要的目录并设置权限
+      initContainers:
+      - name: init-uploads-dir
+        image: "{{ .Values.initContainer.image }}"
+        command: ["sh", "-c", "mkdir -p /app/uploads && chmod -R 777 /app/uploads && chown -R 1000:1000 /app/uploads"]
+        securityContext:
+          runAsUser: 0  # 以 root 用户运行 initContainer
+        volumeMounts:
+        - name: app-data
+          mountPath: /app
+      containers:
+      - name: app
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: Always
+        command: ["node"]
+        args: ["--experimental-modules", "--es-module-specifier-resolution=node", "ts/src/service.js"]
+        # 添加 securityContext 以确保容器有足够的权限
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+        env:
+        - name: URI
+          value: mongodb://{{ include "puppy-party.fullname" . }}-mongodb:{{ .Values.config.mongodb.port }}
+        - name: REDISHOST
+          value: {{ include "puppy-party.fullname" . }}-redis
+        - name: REDIS_PORT
+          value: "{{ .Values.config.redis.port }}"
+        - name: MERKLE_SERVER
+          value: http://{{ include "puppy-party.fullname" . }}-merkle:{{ .Values.config.merkle.port }}
+        - name: SERVER_ADMIN_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: SERVER_ADMIN_KEY
+              optional: true
+        - name: USER_ADDRESS
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: USER_ADDRESS
+              optional: true
+        - name: USER_PRIVATE_ACCOUNT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: USER_PRIVATE_ACCOUNT
+              optional: true
+        - name: DEPLOY
+          value: "{{ .Values.config.app.deploy | default "" }}"
+        - name: REMOTE
+          value: "{{ .Values.config.app.remote | default "" }}"
+        - name: AUTO_SUBMIT
+          value: "{{ .Values.config.app.autoSubmit | default "" }}"
+        - name: MIGRATE
+          value: "{{ .Values.config.app.migrate | default "" }}"
+        - name: IMAGE
+          value: "{{ .Values.config.app.image | default "" }}"
+        - name: SETTLEMENT_CONTRACT_ADDRESS
+          value: "{{ .Values.config.app.settlementContractAddress | default "" }}"
+        - name: RPC_PROVIDER
+          value: "{{ .Values.config.app.rpcProvider | default "" }}"
+        # 添加自定义环境变量 - 这部分非常重要，确保用户指定的自定义环境变量被注入到容器中
+        {{- if .Values.config.app.customEnv }}
+        # 以下是用户指定的自定义环境变量，从values.config.app.customEnv对象中获取
+        {{- range $key, $value := .Values.config.app.customEnv }}
+        - name: {{ $key }}
+          value: "{{ $value }}"
+        {{- end }}
+        {{- end }}
+        ports:
+        - containerPort: 3000
+          name: http
+        volumeMounts:
+        - name: app-data
+          mountPath: /app/uploads
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+      volumes:
+      - name: app-data
+        emptyDir: {}

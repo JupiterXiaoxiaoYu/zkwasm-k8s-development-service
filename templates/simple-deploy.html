@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deploy from GitHub</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {
+      padding-top: 2rem;
+      padding-bottom: 2rem;
+    }
+    .form-group {
+      margin-bottom: 1rem;
+    }
+    pre {
+      background-color: #f8f9fa;
+      padding: 1rem;
+      border-radius: 0.25rem;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .github-url-info {
+      font-size: 0.875rem;
+      color: #6c757d;
+    }
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      flex-direction: column;
+      color: white;
+    }
+    .loading-text {
+      margin-top: 1rem;
+      font-size: 1.2rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="mb-4">Deploy from GitHub</h1>
+    
+    <div class="alert alert-info mb-4">
+      <h4 class="alert-heading">Using Branch Information</h4>
+      <p>You can now specify a branch in your GitHub URL by using the format: <code>https://github.com/username/repository/tree/branch</code></p>
+      <p>When a branch is specified:</p>
+      <ul>
+        <li>The system will try to find a container image with a tag matching the branch name</li>
+        <li>If no exact match is found, it will try variations like <code>branch-name</code>, <code>feature-xyz</code> (for <code>feature/xyz</code>), or <code>vX</code> (for branch <code>X</code>)</li>
+        <li>If no branch-specific image is found, it will fall back to the <code>latest</code> tag</li>
+      </ul>
+      <p class="mb-0">This feature is useful for deploying specific versions or feature branches of your application.</p>
+    </div>
+    
+    <div class="alert alert-warning mb-4">
+      <h4 class="alert-heading">Troubleshooting Image Updates</h4>
+      <p>If you're upgrading an existing deployment and the container image doesn't seem to update:</p>
+      <ul>
+        <li>Enable the <strong>Force restart pods after deployment</strong> option in the advanced settings</li>
+        <li>This will ensure Kubernetes pulls the latest image even if the image tag hasn't changed</li>
+        <li>The system now automatically adds a timestamp to image tags during upgrades to force image pulls</li>
+      </ul>
+      <p class="mb-0">These features help overcome Kubernetes' default behavior of not pulling images when the tag remains the same.</p>
+    </div>
+    
+    <div class="card mb-4">
+      <div class="card-header">
+        <h2 class="h5 mb-0">Deploy Application</h2>
+      </div>
+      <div class="card-body">
+        <form id="deployForm">
+          <div class="form-group">
+            <label for="githubUrl">GitHub Repository URL</label>
+            <input type="text" class="form-control" id="githubUrl" name="githubUrl" required
+                   placeholder="https://github.com/owner/repo">
+            <div class="github-url-info mt-1">
+              Examples:<br>
+              - https://github.com/username/repository<br>
+              - https://github.com/username/repository/tree/branch<br>
+              <small class="text-muted">If a branch is specified, the system will try to find an image with that branch name as tag.</small>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="namespace">Kubernetes Namespace</label>
+            <input type="text" class="form-control" id="namespace" name="namespace" required
+                   placeholder="Enter namespace">
+            <div class="github-url-info mt-1">
+              The namespace where the application will be deployed. If it doesn't exist, it will be created.
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label>Advanced Options</label>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="showAdvancedOptions">
+              <label class="form-check-label" for="showAdvancedOptions">Show advanced options</label>
+            </div>
+          </div>
+          
+          <div id="advancedOptions" class="d-none">
+            <div class="card mb-3">
+              <div class="card-header bg-light">
+                Environment Variables
+              </div>
+              <div class="card-body">
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="form-group">
+                      <label for="chainId">Chain ID</label>
+                      <input type="text" class="form-control" id="chainId" name="chainId" value="11155111">
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="form-group">
+                      <label for="allowedOrigins">Allowed Origins</label>
+                      <input type="text" class="form-control" id="allowedOrigins" name="allowedOrigins" value="*">
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="form-group">
+                      <label for="deployValue">Deploy Value</label>
+                      <select class="form-control" id="deployValue" name="deployValue">
+                        <option value="TRUE">TRUE</option>
+                        <option value="FALSE">FALSE</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="form-group">
+                      <label for="remoteValue">Remote Value</label>
+                      <select class="form-control" id="remoteValue" name="remoteValue">
+                        <option value="TRUE">TRUE</option>
+                        <option value="FALSE">FALSE</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="form-group">
+                      <label for="migrateValue">Migrate Value</label>
+                      <select class="form-control" id="migrateValue" name="migrateValue">
+                        <option value="FALSE">FALSE</option>
+                        <option value="TRUE">TRUE</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="form-group">
+                      <label for="autoSubmitValue">Auto Submit Value</label>
+                      <input type="text" class="form-control" id="autoSubmitValue" name="autoSubmitValue" value="">
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="form-group mt-3">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="forceImageTag" name="forceImageTag">
+                    <label class="form-check-label" for="forceImageTag">
+                      Force use branch as image tag
+                    </label>
+                    <div class="form-text text-muted">
+                      Enable this option if you want to use the branch name as the image tag even if the image check fails.
+                      This is useful when you know the image exists but the system cannot detect it automatically.
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="form-group mt-3">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="forceUpgrade" name="forceUpgrade">
+                    <label class="form-check-label" for="forceUpgrade">
+                      Force upgrade existing deployment
+                    </label>
+                    <div class="form-text text-muted">
+                      Enable this option if you want to force upgrade an existing deployment.
+                      This is useful when you encounter conflicts with existing Ingress resources.
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="form-group mt-3">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="forceRestart" name="forceRestart">
+                    <label class="form-check-label" for="forceRestart">
+                      Force restart pods after deployment
+                    </label>
+                    <div class="form-text text-muted">
+                      Enable this option to force restart pods after deployment.
+                      This ensures the latest image is pulled even if the image tag hasn't changed.
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="form-group">
+                      <label for="settlementContractAddress">Settlement Contract Address</label>
+                      <input type="text" class="form-control" id="settlementContractAddress" name="settlementContractAddress">
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="form-group">
+                      <label for="rpcProvider">RPC Provider</label>
+                      <input type="text" class="form-control" id="rpcProvider" name="rpcProvider">
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="form-group mt-3">
+                  <label for="customEnvVars">Custom Environment Variables (JSON format)</label>
+                  <textarea class="form-control" id="customEnvVars" name="customEnvVars" rows="3" 
+                            placeholder='{"KEY1": "value1", "KEY2": "value2"}'></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <button type="submit" class="btn btn-primary">Deploy</button>
+        </form>
+      </div>
+    </div>
+    
+    <div class="card">
+      <div class="card-header">
+        <h2 class="h5 mb-0">Deployment Result</h2>
+      </div>
+      <div class="card-body">
+        <pre id="deploymentResult" class="d-none">No deployment result yet</pre>
+        <div id="noResultMessage">No deployment has been made yet.</div>
+        
+        <div id="cleanupSection" class="mt-3 d-none">
+          <hr>
+          <h5>Troubleshooting</h5>
+          <p>If you're seeing errors about "another operation in progress", you can try to clean up stuck operations:</p>
+          <div class="row">
+            <div class="col-md-6">
+              <div class="form-group">
+                <label for="cleanupNamespace">Namespace</label>
+                <input type="text" class="form-control" id="cleanupNamespace">
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-group">
+                <label for="cleanupReleaseName">Release Name</label>
+                <input type="text" class="form-control" id="cleanupReleaseName">
+              </div>
+            </div>
+          </div>
+          <button id="cleanupButton" class="btn btn-warning mt-2">Clean Up Stuck Operations</button>
+          <div id="cleanupResult" class="mt-2"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div id="loadingOverlay" class="loading-overlay d-none">
+    <div class="spinner-border text-light" style="width: 3rem; height: 3rem;" role="status">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <div class="loading-text">Deploying application...</div>
+  </div>
+  
+  <script>
+    // 重置表单状态
+    function resetFormState() {
+      // 重置按钮文本和样式
+      const submitButton = document.querySelector('#deployForm button[type="submit"]');
+      submitButton.textContent = 'Deploy';
+      submitButton.classList.remove('btn-warning');
+      submitButton.classList.add('btn-primary');
+      
+      // 移除升级提示
+      const upgradeAlert = document.getElementById('upgradeAlert');
+      if (upgradeAlert) {
+        upgradeAlert.remove();
+      }
+      
+      // 重置强制升级选项
+      document.getElementById('forceUpgrade').checked = false;
+    }
+    
+    // 显示/隐藏高级选项
+    document.getElementById('showAdvancedOptions').addEventListener('change', function() {
+      const advancedOptions = document.getElementById('advancedOptions');
+      if (this.checked) {
+        advancedOptions.classList.remove('d-none');
+      } else {
+        advancedOptions.classList.add('d-none');
+      }
+    });
+    
+    // 显示清理部分
+    function showCleanupSection(namespace, releaseName) {
+      const cleanupSection = document.getElementById('cleanupSection');
+      cleanupSection.classList.remove('d-none');
+      
+      if (namespace) {
+        document.getElementById('cleanupNamespace').value = namespace;
+      }
+      
+      if (releaseName) {
+        document.getElementById('cleanupReleaseName').value = releaseName;
+      }
+    }
+    
+    // 处理清理操作
+    document.getElementById('cleanupButton').addEventListener('click', async function() {
+      const namespace = document.getElementById('cleanupNamespace').value;
+      const releaseName = document.getElementById('cleanupReleaseName').value;
+      
+      if (!namespace || !releaseName) {
+        alert('Please enter both namespace and release name');
+        return;
+      }
+      
+      // 显示加载中
+      const cleanupResult = document.getElementById('cleanupResult');
+      cleanupResult.innerHTML = '<div class="alert alert-info">Cleaning up operations... Please wait.</div>';
+      
+      try {
+        const response = await fetch('/api/helm/cleanup-helm-operations', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ namespace, releaseName })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          cleanupResult.innerHTML = `<div class="alert alert-success">${result.message}</div>`;
+        } else {
+          cleanupResult.innerHTML = `<div class="alert alert-danger">${result.error}<br>${result.message || ''}</div>`;
+        }
+      } catch (error) {
+        console.error('Error cleaning up operations:', error);
+        cleanupResult.innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
+      }
+    });
+    
+    // 处理表单提交
+    document.getElementById('deployForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      
+      // 显示加载中
+      document.getElementById('loadingOverlay').classList.remove('d-none');
+      
+      const formData = new FormData(this);
+      const data = {
+        githubUrl: formData.get('githubUrl'),
+        namespace: formData.get('namespace'),
+        forceImageTag: formData.get('forceImageTag') === 'on',
+        forceUpgrade: formData.get('forceUpgrade') === 'on',
+        forceRestart: formData.get('forceRestart') === 'on',
+        envVars: {}
+      };
+      
+      // 添加高级选项
+      if (document.getElementById('showAdvancedOptions').checked) {
+        data.envVars = {
+          chainId: formData.get('chainId'),
+          allowedOrigins: formData.get('allowedOrigins'),
+          deployValue: formData.get('deployValue'),
+          remoteValue: formData.get('remoteValue'),
+          migrateValue: formData.get('migrateValue'),
+          autoSubmitValue: formData.get('autoSubmitValue'),
+          settlementContractAddress: formData.get('settlementContractAddress'),
+          rpcProvider: formData.get('rpcProvider')
+        };
+        
+        // 处理自定义环境变量
+        const customEnvVars = formData.get('customEnvVars');
+        if (customEnvVars) {
+          try {
+            data.envVars.custom = JSON.parse(customEnvVars);
+          } catch (error) {
+            alert('Invalid JSON format for custom environment variables');
+            document.getElementById('loadingOverlay').classList.add('d-none');
+            return;
+          }
+        }
+      }
+      
+      try {
+        const response = await fetch('/api/helm/deploy-from-github', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        // 显示部署结果
+        const deploymentResult = document.getElementById('deploymentResult');
+        const noResultMessage = document.getElementById('noResultMessage');
+        
+        // 检查是否是Ingress冲突错误
+        if (!result.success && result.code === 'INGRESS_CONFLICT') {
+          deploymentResult.textContent = JSON.stringify(result, null, 2);
+          deploymentResult.classList.remove('d-none');
+          noResultMessage.classList.add('d-none');
+          
+          // 询问用户是否要强制升级
+          if (confirm(`${result.message}\n\n${result.actionMessage}\n\nDo you want to retry with Force Upgrade enabled?`)) {
+            // 启用强制升级选项
+            document.getElementById('showAdvancedOptions').checked = true;
+            document.getElementById('advancedOptions').classList.remove('d-none');
+            document.getElementById('forceUpgrade').checked = true;
+            
+            // 自动重新提交表单
+            document.getElementById('deployForm').dispatchEvent(new Event('submit'));
+            return;
+          } else {
+            alert('Deployment canceled due to Ingress conflict.');
+          }
+          
+          document.getElementById('loadingOverlay').classList.add('d-none');
+          return;
+        }
+        
+        // 检查是否存在已有的Deployment
+        if (!result.success && result.code === 'EXISTING_DEPLOYMENT') {
+          deploymentResult.textContent = JSON.stringify(result, null, 2);
+          deploymentResult.classList.remove('d-none');
+          noResultMessage.classList.add('d-none');
+          
+          // 创建一个更友好的确认对话框
+          const existingReleases = result.details.existingReleases.map(r => 
+            `- ${r.name} (${r.chart}, status: ${r.status}, updated: ${r.updated})`
+          ).join('\n');
+          
+          const confirmMessage = `${result.message}\n\nExisting deployments:\n${existingReleases}\n\n${result.actionMessage}\n\nDo you want to upgrade instead of creating a new deployment?`;
+          
+          if (confirm(confirmMessage)) {
+            // 启用强制升级选项
+            document.getElementById('showAdvancedOptions').checked = true;
+            document.getElementById('advancedOptions').classList.remove('d-none');
+            document.getElementById('forceUpgrade').checked = true;
+            
+            // 修改按钮文本
+            const submitButton = document.querySelector('#deployForm button[type="submit"]');
+            submitButton.textContent = 'Upgrade';
+            submitButton.classList.remove('btn-primary');
+            submitButton.classList.add('btn-warning');
+            
+            // 显示升级提示
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-warning mt-3';
+            alertDiv.id = 'upgradeAlert';
+            alertDiv.innerHTML = '<strong>Upgrade Mode:</strong> You are about to upgrade an existing deployment. <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="cancelUpgradeBtn">Cancel Upgrade</button>';
+            document.querySelector('#deployForm').prepend(alertDiv);
+            
+            // 添加取消升级按钮的事件监听器
+            document.getElementById('cancelUpgradeBtn').addEventListener('click', function() {
+              resetFormState();
+            });
+            
+            // 隐藏加载中
+            document.getElementById('loadingOverlay').classList.add('d-none');
+            return;
+          } else {
+            // 重置表单状态
+            resetFormState();
+            alert('Deployment canceled. You chose not to upgrade the existing deployment.');
+          }
+          
+          document.getElementById('loadingOverlay').classList.add('d-none');
+          return;
+        }
+        
+        // 格式化部署结果，使分支信息更加明显
+        if (result.success && result.details) {
+          // 创建一个更友好的结果对象
+          const friendlyResult = {
+            success: result.success,
+            message: result.message,
+            details: {
+              ...result.details,
+              // 如果是升级操作，突出显示
+              deploymentType: result.details.deploymentType === 'upgrade' ? '🔄 Upgrade' : '🚀 New Deployment',
+              // 突出显示操作类型
+              actionPerformed: result.details.actionPerformed === 'Upgrade' ? '🔄 Upgraded' : '🚀 Deployed',
+              // 添加Pod重启信息
+              podsStatus: result.details.podsRestarted ? '♻️ Pods were restarted' : 'Pods were not restarted'
+            },
+            upgradeInfo: result.upgradeInfo,
+            notificationType: result.notificationType,
+            notificationTitle: result.notificationTitle
+          };
+          deploymentResult.textContent = JSON.stringify(friendlyResult, null, 2);
+        } else {
+          deploymentResult.textContent = JSON.stringify(result, null, 2);
+        }
+        
+        deploymentResult.classList.remove('d-none');
+        noResultMessage.classList.add('d-none');
+        
+        // 如果部署成功，显示成功消息
+        if (result.success) {
+          const actionType = result.details && result.details.deploymentType === 'upgrade' ? 'Upgrade' : 'Deployment';
+          alert(`${actionType} successful!`);
+        } else {
+          alert(`Deployment failed: ${result.error || result.message}`);
+          
+          // 检查是否是"another operation in progress"错误
+          if (result.details && (
+              result.details.includes('another operation (install/upgrade/rollback) is in progress') ||
+              result.details.includes('UPGRADE FAILED: another operation')
+            )) {
+            // 从错误消息中提取release名称
+            const releaseNameMatch = result.details.match(/release\s+([^\s]+)/i);
+            const releaseName = releaseNameMatch ? releaseNameMatch[1] : '';
+            
+            // 显示清理部分
+            showCleanupSection(data.namespace, releaseName || data.releaseName);
+          }
+        }
+      } catch (error) {
+        console.error('Error deploying application:', error);
+        alert(`Error deploying application: ${error.message}`);
+        
+        const deploymentResult = document.getElementById('deploymentResult');
+        const noResultMessage = document.getElementById('noResultMessage');
+        
+        deploymentResult.textContent = JSON.stringify({ error: error.message }, null, 2);
+        deploymentResult.classList.remove('d-none');
+        noResultMessage.classList.add('d-none');
+      } finally {
+        // 隐藏加载中
+        document.getElementById('loadingOverlay').classList.add('d-none');
+      }
+    });
+  </script>
+</body>
+</html> 

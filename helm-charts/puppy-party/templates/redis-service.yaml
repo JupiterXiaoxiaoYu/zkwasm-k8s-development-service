@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "puppy-party.fullname" . }}-redis
+  labels:
+    {{- include "puppy-party.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.config.redis.port }}
+      targetPort: {{ .Values.config.redis.port }}
+      protocol: TCP
+      name: redis
+  selector:
+    app: {{ include "puppy-party.fullname" . }}-redis

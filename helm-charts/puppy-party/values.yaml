@@ -1,0 +1,91 @@
+# Default values for puppy-party
+replicaCount: 1
+
+image:
+  repository: ghcr.io/jupiterxiaoxiaoyu/puppy-party
+  pullPolicy: Always
+  tag: "latest"  # Could be latest or MD5 value
+
+ingress:
+  enabled: true
+  className: nginx  # 使用新的ingressClassName字段
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "8m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "180"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "180"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "180"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  tls:
+    enabled: true
+  domain:
+    base: "zkwasm.ai"
+    prefix: "rpc"  # Generate rpc.namespace.zkwasm.ai
+  cors:
+    enabled: true
+    allowOrigins: "*"
+    allowMethods: "GET, PUT, POST, DELETE, PATCH, OPTIONS"
+    allowHeaders: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization"
+    allowCredentials: "true"
+    maxAge: "1728000"
+
+config:
+  app:
+    customEnv: {}
+    deploy: "TRUE"
+    remote: "TRUE"
+    autoSubmit: ""
+    migrate: "FALSE"
+    image: ""
+    settlementContractAddress: ""
+    rpcProvider: ""
+  mongodb:
+    enabled: true
+    image:
+      repository: mongo
+      tag: latest
+    port: 27017
+    persistence:
+      enabled: true
+      storageClassName: csi-disk  
+      size: 10Gi
+  redis:
+    enabled: true
+    image:
+      repository: redis
+      tag: 7.4.2
+    port: 6379
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "500m"
+  merkle:
+    enabled: true
+    image:
+      repository: sinka2022/zkwasm-merkleservice
+      tag: v1
+    port: 3030
+
+service:
+  type: ClusterIP
+  port: 3000
+
+# 初始化容器配置
+initContainer:
+  enabled: true
+  image: node:18-slim
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

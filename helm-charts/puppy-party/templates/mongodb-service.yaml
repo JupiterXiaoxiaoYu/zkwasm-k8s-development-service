@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "puppy-party.fullname" . }}-mongodb
+  labels:
+    {{- include "puppy-party.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.config.mongodb.port }}
+      targetPort: {{ .Values.config.mongodb.port }}
+      protocol: TCP
+      name: mongodb
+  selector:
+    app: {{ include "puppy-party.fullname" . }}-mongodb
