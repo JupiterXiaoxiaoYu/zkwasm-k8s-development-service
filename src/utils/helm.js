@@ -139,7 +139,7 @@ const generateHelmChart = (envVars) => {
 };
 
 // Deploy Helm chart to Kubernetes
-const deployHelmChart = (chartPath, releaseName, namespace, values = {}, upgradeOnly = false, forceUpgrade = false, forceRestart = false) => {
+const deployHelmChart = (chartPath, releaseName, namespace, values = {}, upgradeOnly = false) => {
   if (!chartPath) {
     throw new Error('Chart path is required');
   }
@@ -261,13 +261,6 @@ const deployHelmChart = (chartPath, releaseName, namespace, values = {}, upgrade
       console.log(`Installing/upgrading release: ${releaseName} in namespace ${namespace}`);
     }
     
-    // 如果强制升级，添加--force参数
-    if (forceUpgrade) {
-      helmCommand += ' --force';
-    }
-    
-    console.log(`Executing Helm command: ${helmCommand}`);
-    
     // 运行helm命令
     const result = shell.exec(
       helmCommand,
@@ -314,10 +307,6 @@ const deployHelmChart = (chartPath, releaseName, namespace, values = {}, upgrade
         
         // 构建新的命令，使用--no-hooks参数
         let retryCommand = `helm upgrade ${releaseName} ${chartPath} --values ${minimalValuesPath} --namespace ${namespace} --reuse-values --timeout 5m --no-hooks`;
-        
-        if (forceUpgrade) {
-          retryCommand += ' --force';
-        }
         
         console.log(`使用--no-hooks参数重试: ${retryCommand}`);
         
@@ -380,11 +369,6 @@ const deployHelmChart = (chartPath, releaseName, namespace, values = {}, upgrade
     // 检查是否是升级操作
     const isUpgradeOperation = upgradeOnly || result.stdout.includes('has been upgraded');
     console.log(`✅ HELM OPERATION SUCCESSFUL: ${isUpgradeOperation ? 'UPGRADE' : 'INSTALL'}`);
-    
-    // 如果需要强制重启Pod，执行kubectl rollout restart
-    if (forceRestart) {
-      restartDeployments(releaseName, namespace);
-    }
     
     // 获取永久存储的Helm图表路径
     const projectRoot = path.resolve(__dirname, '../../');
@@ -497,38 +481,6 @@ const updateDeploymentsDirectly = (releaseName, namespace, values) => {
   } catch (error) {
     console.error(`直接更新部署失败:`, error);
     throw new Error(`直接更新部署失败: ${error.message}`);
-  }
-};
-
-// 重启部署的辅助函数
-const restartDeployments = (releaseName, namespace) => {
-  try {
-    console.log(`强制重启${namespace}命名空间中的${releaseName}部署...`);
-    
-    // 使用kubectl获取与release相关的所有deployment
-    const deploymentsResult = shell.exec(
-      `kubectl get deployment -n ${namespace} -l app.kubernetes.io/instance=${releaseName} -o name`,
-      { silent: true }
-    );
-    
-    if (deploymentsResult.code === 0 && deploymentsResult.stdout.trim()) {
-      const deployments = deploymentsResult.stdout.trim().split('\n');
-      console.log(`找到${deployments.length}个需要重启的部署: ${deployments.join(', ')}`);
-      
-      // 对每个deployment执行rollout restart
-      for (const deployment of deployments) {
-        console.log(`重启 ${deployment}...`);
-        shell.exec(
-          `kubectl rollout restart ${deployment} -n ${namespace}`,
-          { silent: false }
-        );
-      }
-    } else {
-      console.warn(`未找到与${releaseName}相关的部署，无法重启`);
-    }
-  } catch (error) {
-    console.warn(`重启部署时出错: ${error.message}`);
-    // 继续执行，不中断流程
   }
 };
 
@@ -768,7 +720,7 @@ const checkAndCleanHelmOperations = (releaseName, namespace) => {
       } else {
         console.warn(`Failed to uninstall: ${uninstallResult.stderr}`);
         
-        // 如果卸载失败，尝试使用--force标志
+        // 如果卸载失败，尝试使用--no-hooks标志
         console.log(`Attempting to force uninstall release ${releaseName}`);
         
         const forceUninstallResult = shell.exec(

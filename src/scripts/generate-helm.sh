@@ -188,14 +188,6 @@ echo "config:" > ${CUSTOM_ENV_FILE}
 echo "  app:" >> ${CUSTOM_ENV_FILE}
 echo "    customEnv:" >> ${CUSTOM_ENV_FILE}
 
-# 注意：自定义环境变量现在完全由routes/helm.js处理
-# 这里不再从环境变量中提取自定义环境变量
-# 而是依赖于values.yaml中已经包含的customEnv对象
-
-echo "注意：自定义环境变量现在由deployment-service处理"
-echo "脚本不再从环境变量中提取自定义环境变量"
-echo "而是依赖于values.yaml中已经包含的customEnv对象"
-
 # 检查values.yaml文件是否存在
 if [ -f "${CHART_PATH}/values.yaml" ]; then
   # 检查values.yaml中是否已经包含customEnv部分
@@ -225,7 +217,6 @@ if [ -f "${CHART_PATH}/values.yaml" ]; then
     fi
     # 在app:行后添加customEnv: {}
     sed -i '/^  app:/a \    customEnv: {}' ${CHART_PATH}/values.yaml
-    echo "添加了空的customEnv对象到values.yaml"
   fi
 else
   echo "values.yaml文件不存在，将创建包含空customEnv对象的文件"

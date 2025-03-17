@@ -71,21 +71,10 @@
       <p>When a branch is specified:</p>
       <ul>
         <li>The system will try to find a container image with a tag matching the branch name</li>
-        <li>If no exact match is found, it will try variations like <code>branch-name</code>, <code>feature-xyz</code> (for <code>feature/xyz</code>), or <code>vX</code> (for branch <code>X</code>)</li>
+        <li>If no exact match is found, it will try variations like <code>branch-name</code>, <code>feature-xyz</code> (for <code>feature/xyz</code>), or <code>branch-feature-xyz</code></li>
         <li>If no branch-specific image is found, it will fall back to the <code>latest</code> tag</li>
       </ul>
       <p class="mb-0">This feature is useful for deploying specific versions or feature branches of your application.</p>
-    </div>
-    
-    <div class="alert alert-warning mb-4">
-      <h4 class="alert-heading">Troubleshooting Image Updates</h4>
-      <p>If you're upgrading an existing deployment and the container image doesn't seem to update:</p>
-      <ul>
-        <li>Enable the <strong>Force restart pods after deployment</strong> option in the advanced settings</li>
-        <li>This will ensure Kubernetes pulls the latest image even if the image tag hasn't changed</li>
-        <li>The system now automatically adds a timestamp to image tags during upgrades to force image pulls</li>
-      </ul>
-      <p class="mb-0">These features help overcome Kubernetes' default behavior of not pulling images when the tag remains the same.</p>
     </div>
     
     <div class="alert alert-info mb-4">
@@ -239,32 +228,6 @@
                   </div>
                 </div>
                 
-                <div class="form-group mt-3">
-                  <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="forceUpgrade" name="forceUpgrade">
-                    <label class="form-check-label" for="forceUpgrade">
-                      Force upgrade existing deployment
-                    </label>
-                    <div class="form-text text-muted">
-                      Enable this option if you want to force upgrade an existing deployment.
-                      This is useful when you encounter conflicts with existing Ingress resources.
-                    </div>
-                  </div>
-                </div>
-                
-                <div class="form-group mt-3">
-                  <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="forceRestart" name="forceRestart">
-                    <label class="form-check-label" for="forceRestart">
-                      Force restart pods after deployment
-                    </label>
-                    <div class="form-text text-muted">
-                      Enable this option to force restart pods after deployment.
-                      This ensures the latest image is pulled even if the image tag hasn't changed.
-                    </div>
-                  </div>
-                </div>
-                
                 <div class="row">
                   <div class="col-md-6">
                     <div class="form-group">
@@ -348,9 +311,6 @@
       if (upgradeAlert) {
         upgradeAlert.remove();
       }
-      
-      // 重置强制升级选项
-      document.getElementById('forceUpgrade').checked = false;
     }
     
     // 显示/隐藏高级选项
@@ -478,8 +438,6 @@
         githubUrl: formData.get('githubUrl'),
         namespace: formData.get('namespace'),
         forceImageTag: formData.get('forceImageTag') === 'on',
-        forceUpgrade: formData.get('forceUpgrade') === 'on',
-        forceRestart: formData.get('forceRestart') === 'on',
         envVars: {}
       };
       
@@ -532,19 +490,7 @@
           deploymentResult.classList.remove('d-none');
           noResultMessage.classList.add('d-none');
           
-          // 询问用户是否要强制升级
-          if (confirm(`${result.message}\n\n${result.actionMessage}\n\nDo you want to retry with Force Upgrade enabled?`)) {
-            // 启用强制升级选项
-            document.getElementById('showAdvancedOptions').checked = true;
-            document.getElementById('advancedOptions').classList.remove('d-none');
-            document.getElementById('forceUpgrade').checked = true;
-            
-            // 自动重新提交表单
-            document.getElementById('deployForm').dispatchEvent(new Event('submit'));
-            return;
-          } else {
-            alert('Deployment canceled due to Ingress conflict.');
-          }
+          alert('Deployment failed due to Ingress conflict.');
           
           document.getElementById('loadingOverlay').classList.add('d-none');
           return;
@@ -556,45 +502,7 @@
           deploymentResult.classList.remove('d-none');
           noResultMessage.classList.add('d-none');
           
-          // 创建一个更友好的确认对话框
-          const existingReleases = result.details.existingReleases.map(r => 
-            `- ${r.name} (${r.chart}, status: ${r.status}, updated: ${r.updated})`
-          ).join('\n');
-          
-          const confirmMessage = `${result.message}\n\nExisting deployments:\n${existingReleases}\n\n${result.actionMessage}\n\nDo you want to upgrade instead of creating a new deployment?`;
-          
-          if (confirm(confirmMessage)) {
-            // 启用强制升级选项
-            document.getElementById('showAdvancedOptions').checked = true;
-            document.getElementById('advancedOptions').classList.remove('d-none');
-            document.getElementById('forceUpgrade').checked = true;
-            
-            // 修改按钮文本
-            const submitButton = document.querySelector('#deployForm button[type="submit"]');
-            submitButton.textContent = 'Upgrade';
-            submitButton.classList.remove('btn-primary');
-            submitButton.classList.add('btn-warning');
-            
-            // 显示升级提示
-            const alertDiv = document.createElement('div');
-            alertDiv.className = 'alert alert-warning mt-3';
-            alertDiv.id = 'upgradeAlert';
-            alertDiv.innerHTML = '<strong>Upgrade Mode:</strong> You are about to upgrade an existing deployment. <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="cancelUpgradeBtn">Cancel Upgrade</button>';
-            document.querySelector('#deployForm').prepend(alertDiv);
-            
-            // 添加取消升级按钮的事件监听器
-            document.getElementById('cancelUpgradeBtn').addEventListener('click', function() {
-              resetFormState();
-            });
-            
-            // 隐藏加载中
-            document.getElementById('loadingOverlay').classList.add('d-none');
-            return;
-          } else {
-            // 重置表单状态
-            resetFormState();
-            alert('Deployment canceled. You chose not to upgrade the existing deployment.');
-          }
+          alert('Deployment failed. An existing deployment was detected.');
           
           document.getElementById('loadingOverlay').classList.add('d-none');
           return;
@@ -612,8 +520,6 @@
               deploymentType: result.details.deploymentType === 'upgrade' ? '🔄 Upgrade' : '🚀 New Deployment',
               // 突出显示操作类型
               actionPerformed: result.details.actionPerformed === 'Upgrade' ? '🔄 Upgraded' : '🚀 Deployed',
-              // 添加Pod重启信息
-              podsStatus: result.details.podsRestarted ? '♻️ Pods were restarted' : 'Pods were not restarted'
             },
             upgradeInfo: result.upgradeInfo,
             notificationType: result.notificationType,

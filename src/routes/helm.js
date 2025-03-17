@@ -76,7 +76,7 @@ function generateReleaseName(repoName, namespace) {
 // 检查 GitHub 仓库并部署 Helm chart
 router.post('/deploy-from-github', async (req, res) => {
   try {
-    const { githubUrl, namespace, envVars = {}, forceImageTag = false, forceUpgrade = false, forceRestart = false } = req.body;
+    const { githubUrl, namespace, envVars = {}, forceImageTag = false } = req.body;
     
     if (!githubUrl) {
       return res.status(400).json({
@@ -242,47 +242,27 @@ router.post('/deploy-from-github', async (req, res) => {
       console.log(`✅ EXISTING RELEASE FOUND: ${existingRelease.releaseName} in namespace ${namespace}`);
       console.log(`Release details: ${JSON.stringify(existingRelease.releases[0], null, 2)}`);
       
-      if (forceUpgrade) {
-        // 如果启用了强制升级，使用现有的release名称
-        console.log(`Found existing release. Using existing release name: ${existingRelease.releaseName} for upgrade`);
-        releaseName = existingRelease.releaseName;
-        upgradeOnly = true;
-        
-        // 记录现有release的信息，用于调试
-        console.log(`Existing release details:`, JSON.stringify(existingRelease.releases[0], null, 2));
-      } else {
-        return res.status(409).json({
-          success: false,
-          error: 'Existing deployment detected',
-          code: 'EXISTING_DEPLOYMENT',
-          message: `🔄 UPGRADE REQUIRED: ${chartName} is already deployed in the ${namespace} namespace.`,
-          details: {
-            namespace,
-            chartName,
-            existingReleases: existingRelease.releases.map(r => ({
-              name: r.name,
-              chart: r.chart,
-              status: r.status,
-              updated: r.updated,
-              revision: r.revision || 'unknown'
-            })),
-            currentRelease: existingRelease.releaseName,
-            currentStatus: existingRelease.releases[0]?.status || 'unknown'
-          },
-          action: 'upgrade',
-          actionMessage: 'To update this application, please enable the "Force Upgrade" option and try again.',
-          helpText: 'Enabling "Force Upgrade" will update the existing deployment with your new configuration.',
-          buttonText: 'Enable Force Upgrade and Deploy',
-          buttonAction: 'upgrade',
-          timestamp: new Date().toISOString(),
-          requiresUpgrade: true,
-          upgradeInfo: {
-            releaseName: existingRelease.releaseName,
-            currentRevision: existingRelease.releases[0]?.revision || 'unknown',
-            lastDeployed: existingRelease.releases[0]?.updated || new Date().toISOString()
-          }
-        });
-      }
+      return res.status(409).json({
+        success: false,
+        error: 'Existing deployment detected',
+        code: 'EXISTING_DEPLOYMENT',
+        message: `🔄 UPGRADE REQUIRED: ${chartName} is already deployed in the ${namespace} namespace.`,
+        details: {
+          namespace,
+          chartName,
+          existingReleases: existingRelease.releases.map(r => ({
+            name: r.name,
+            chart: r.chart,
+            status: r.status,
+            updated: r.updated,
+            revision: r.revision || 'unknown'
+          })),
+          currentRelease: existingRelease.releaseName,
+          currentStatus: existingRelease.releases[0]?.status || 'unknown'
+        },
+        timestamp: new Date().toISOString(),
+        requiresUpgrade: true,
+      });
     }
     
     // 准备环境变量
@@ -351,12 +331,6 @@ router.post('/deploy-from-github', async (req, res) => {
           tag: imageTag,
           pullPolicy: 'Always' // 确保每次都拉取最新镜像
         },
-        // 确保正确处理podAnnotations
-        podAnnotations: {
-          ...(existingValues.podAnnotations || {}),
-          // 如果需要强制重启Pod，添加时间戳注解
-          ...(forceRestart ? { 'kubectl.kubernetes.io/restartedAt': new Date().toISOString() } : {})
-        },
         config: {
           ...(existingValues.config || {}),
           app: {
@@ -370,42 +344,6 @@ router.post('/deploy-from-github', async (req, res) => {
       };
       
       console.log(`Upgrading existing release with merged values to preserve configuration`);
-      
-      // 如果强制升级，检查是否有Ingress资源，但不删除它们
-      if (forceUpgrade) {
-        try {
-          console.log(`Force upgrade enabled, checking for existing Ingress resources...`);
-          
-          // 使用kubectl获取所有与当前chart相关的Ingress资源
-          const ingressResult = shell.exec(
-            `kubectl get ingress -n ${namespace} -l app.kubernetes.io/instance=${releaseName} -o json`,
-            { silent: true }
-          );
-          
-          if (ingressResult.code === 0) {
-            const ingressList = JSON.parse(ingressResult.stdout);
-            if (ingressList.items && ingressList.items.length > 0) {
-              console.log(`Found ${ingressList.items.length} existing Ingress resources for release ${releaseName}`);
-              console.log(`Will attempt to upgrade without modifying existing Ingress resources`);
-              
-              // 在values中设置ingress.enabled=false，避免创建新的Ingress
-              values.ingress = {
-                ...values.ingress,
-                enabled: false
-              };
-              
-              console.log(`Set ingress.enabled=false to avoid conflicts with existing Ingress resources`);
-            } else {
-              console.log(`No existing Ingress resources found for release ${releaseName}`);
-            }
-          } else {
-            console.warn(`Failed to get Ingress resources: ${ingressResult.stderr}`);
-          }
-        } catch (error) {
-          console.error(`Error handling Ingress resources: ${error.message}`);
-          // 继续执行，不中断流程
-        }
-      }
     } else {
       // 如果是新部署，传递所有值
       values = {
@@ -505,7 +443,7 @@ router.post('/deploy-from-github', async (req, res) => {
     
     try {
       // 部署 Helm chart
-      const deployResult = await helm.deployHelmChart(chartPath, releaseName, namespace, values, upgradeOnly, forceUpgrade, forceRestart);
+      const deployResult = await helm.deployHelmChart(chartPath, releaseName, namespace, values, upgradeOnly);
       
       // 获取实际使用的镜像标签（不再添加时间戳）
       const actualImageTag = values.image && values.image.tag ? values.image.tag : imageTag;
@@ -603,7 +541,6 @@ router.post('/deploy-from-github', async (req, res) => {
           helmOutput: deployResult.message && deployResult.message.substring(0, 500), // 限制输出长度
           isUpgrade: isUpgradeOperation,
           wasRetried: deployResult.retried || false,
-          podsRestarted: deployResult.podsRestarted || false,
           helmChartLocation: helmChartLocation // 添加Helm图表位置信息
         },
         upgradePerformed: isUpgradeOperation,
@@ -643,7 +580,7 @@ router.post('/deploy-from-github', async (req, res) => {
       // 检查是否是Ingress冲突
       else if (error.code === 'INGRESS_CONFLICT') {
         errorMessage = `${errorIcon} ${errorAction} FAILED: Ingress resource conflict`;
-        errorDetails = `An Ingress with host "${error.details.host}" and path "${error.details.path}" already exists in namespace "${error.details.namespace}". Enable the "Force Upgrade" option to preserve existing Ingress resources.`;
+        errorDetails = `An Ingress with host "${error.details.host}" and path "${error.details.path}" already exists in namespace "${error.details.namespace}". Please check your Ingress configuration.`;
       } else {
         errorMessage = `${errorIcon} ${errorAction} FAILED: ${errorMessage}`;
       }
