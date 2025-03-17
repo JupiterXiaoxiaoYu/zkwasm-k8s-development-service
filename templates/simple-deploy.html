@@ -502,7 +502,48 @@
           deploymentResult.classList.remove('d-none');
           noResultMessage.classList.add('d-none');
           
-          alert('Deployment failed. An existing deployment was detected.');
+          // 显示确认对话框，询问用户是否要升级
+          if (confirm('An existing deployment was detected. Do you want to upgrade it?')) {
+            // 用户确认升级，执行升级操作
+            const upgradeData = {
+              ...data,
+              upgradeOnly: true,
+              releaseName: result.details?.currentRelease
+            };
+            
+            try {
+              // 显示正在升级的加载提示
+              document.getElementById('loadingOverlay').classList.remove('d-none');
+              document.querySelector('.loading-text').textContent = 'Upgrading application...';
+              
+              const upgradeResponse = await fetch('/api/helm/deploy-from-github', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(upgradeData)
+              });
+              
+              const upgradeResult = await upgradeResponse.json();
+              
+              // 显示升级结果
+              deploymentResult.textContent = JSON.stringify(upgradeResult, null, 2);
+              deploymentResult.classList.remove('d-none');
+              noResultMessage.classList.add('d-none');
+              
+              if (upgradeResult.success) {
+                alert('Upgrade successful!');
+              } else {
+                alert(`Upgrade failed: ${upgradeResult.error || upgradeResult.message}`);
+              }
+            } catch (error) {
+              console.error('Error during upgrade:', error);
+              alert(`Error during upgrade: ${error.message}`);
+            }
+          } else {
+            // 用户取消升级
+            alert('Upgrade cancelled by user.');
+          }
           
           document.getElementById('loadingOverlay').classList.add('d-none');
           return;

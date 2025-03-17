@@ -234,11 +234,131 @@ router.post('/deploy-from-github', async (req, res) => {
     // 生成唯一的 Release Name
     let releaseName = generateReleaseName(repo, namespace);
     let upgradeOnly = false;
+    let chartPath;
+    let tempDir;
+    let values = {
+      config: {
+        app: {
+          customEnv: {}
+        }
+      }
+    };
     
     // 检查是否已经存在相同chart的发布
     const existingRelease = await helm.checkReleaseExists(namespace, chartName);
     
-    if (existingRelease.exists) {
+    // 如果请求中包含upgradeOnly标志，则执行升级操作
+    if (req.body.upgradeOnly && existingRelease.exists) {
+      console.log(`✅ UPGRADE REQUESTED: Upgrading existing release ${existingRelease.releaseName} in namespace ${namespace}`);
+      
+      // 使用现有的release名称
+      releaseName = existingRelease.releaseName;
+      upgradeOnly = true;
+      
+      // 准备环境变量
+      const helmEnvVars = {
+        CHART_NAME: chartName, // 确保使用从GitHub URL中提取的repo名称作为chart名称
+        GITHUB_OWNER: owner.toLowerCase(), // 确保传递GitHub所有者信息
+        CHAIN_ID: envVars.chainId || "11155111",
+        ALLOWED_ORIGINS: envVars.allowedOrigins || "*",
+        CHART_PATH: `./helm-charts/${chartName}`,
+        DEPLOY_VALUE: envVars.deployValue !== undefined ? envVars.deployValue : "",
+        REMOTE_VALUE: envVars.remoteValue !== undefined ? envVars.remoteValue : "",
+        AUTO_SUBMIT_VALUE: envVars.autoSubmitValue !== undefined ? envVars.autoSubmitValue : "",
+        MIGRATE_VALUE: envVars.migrateValue !== undefined ? envVars.migrateValue : "",
+        MIGRATE_IMAGE_VALUE: envVars.migrateImageValue !== undefined ? envVars.migrateImageValue : "",
+        IMAGE_VALUE: envVars.imageValue !== undefined ? envVars.imageValue : "",
+        SETTLEMENT_CONTRACT_ADDRESS: envVars.settlementContractAddress !== undefined ? envVars.settlementContractAddress : "",
+        RPC_PROVIDER: envVars.rpcProvider !== undefined ? envVars.rpcProvider : "",
+      };
+      
+      // 添加自定义环境变量，不再使用custom_前缀
+      if (envVars.custom && typeof envVars.custom === 'object') {
+        // 过滤掉值为undefined或null的自定义环境变量
+        const filteredCustomEnvs = Object.entries(envVars.custom)
+          .filter(([_, value]) => value !== undefined && value !== null)
+          .reduce((acc, [key, value]) => {
+            // 直接使用原始键名，不添加前缀
+            acc[key] = value;
+            return acc;
+          }, {});
+        
+        // 确保values.config.app.customEnv存在
+        if (!values.config) values.config = {};
+        if (!values.config.app) values.config.app = {};
+        
+        // 将过滤后的自定义环境变量添加到values.config.app.customEnv中，保留现有的值
+        values.config.app.customEnv = {
+          ...(values.config.app.customEnv || {}), // 保留现有的自定义环境变量
+          ...filteredCustomEnvs
+        };
+        
+        console.log(`添加了 ${Object.keys(filteredCustomEnvs).length} 个自定义环境变量到values.config.app.customEnv`);
+        // 打印每个自定义环境变量的名称，帮助调试
+        Object.keys(filteredCustomEnvs).forEach(key => {
+          console.log(`  - 自定义环境变量: ${key}`);
+        });
+        
+        // 打印最终的自定义环境变量对象
+        console.log('最终的自定义环境变量对象:', JSON.stringify(values.config.app.customEnv, null, 2));
+      } else {
+        console.log('没有自定义环境变量需要添加');
+        // 确保customEnv对象存在，即使为空
+        if (!values.config) values.config = {};
+        if (!values.config.app) values.config.app = {};
+        values.config.app.customEnv = values.config.app.customEnv || {};
+      }
+      
+      // 添加详细日志，跟踪DEPLOY_VALUE的值
+      console.log(`DEPLOY_VALUE in request: "${envVars.deployValue}"`);
+      console.log(`DEPLOY_VALUE type: ${typeof envVars.deployValue}`);
+      console.log(`DEPLOY_VALUE in helmEnvVars: "${helmEnvVars.DEPLOY_VALUE}"`);
+      
+      console.log(`Generating Helm chart with environment variables:`, helmEnvVars);
+      
+      // 生成 Helm chart
+      const { chartPath: generatedChartPath, tempDir: generatedTempDir } = await helm.generateHelmChart(helmEnvVars);
+      chartPath = generatedChartPath;
+      tempDir = generatedTempDir;
+      
+      // 获取现有release的值
+      const existingValues = await helm.getHelmReleaseValues(releaseName, namespace);
+      
+      // 记录现有的DEPLOY_VALUE
+      console.log(`Existing DEPLOY_VALUE: "${existingValues.config?.app?.deploy || ''}"`);
+      
+      // 只更新镜像相关的值，保留其他现有值
+      values = {
+        ...existingValues,
+        image: {
+          repository: `ghcr.io/${owner.toLowerCase()}/${chartName}`,
+          tag: imageTag,
+          pullPolicy: 'Always' // 确保每次都拉取最新镜像
+        },
+        config: {
+          ...(existingValues.config || {}),
+          app: {
+            ...(existingValues.config?.app || {}),
+            ...values.config?.app, // 保留我们之前设置的自定义环境变量
+            // 确保IMAGE_VALUE和MIGRATE_IMAGE_VALUE被正确设置
+            image: envVars.imageValue !== undefined ? envVars.imageValue : (existingValues.config?.app?.image || ""),
+            migrateImageValue: envVars.migrateImageValue !== undefined ? envVars.migrateImageValue : (existingValues.config?.app?.migrateImageValue || ""),
+            // 确保其他环境变量也被正确更新
+            deploy: envVars.deployValue !== undefined ? envVars.deployValue : (existingValues.config?.app?.deploy || ""),
+            remote: envVars.remoteValue !== undefined ? envVars.remoteValue : (existingValues.config?.app?.remote || ""),
+            autoSubmit: envVars.autoSubmitValue !== undefined ? envVars.autoSubmitValue : (existingValues.config?.app?.autoSubmit || ""),
+            migrate: envVars.migrateValue !== undefined ? envVars.migrateValue : (existingValues.config?.app?.migrate || ""),
+            settlementContractAddress: envVars.settlementContractAddress !== undefined ? envVars.settlementContractAddress : (existingValues.config?.app?.settlementContractAddress || ""),
+            rpcProvider: envVars.rpcProvider !== undefined ? envVars.rpcProvider : (existingValues.config?.app?.rpcProvider || "")
+          }
+        }
+      };
+      
+      // 记录最终的DEPLOY_VALUE
+      console.log(`Final DEPLOY_VALUE: "${values.config?.app?.deploy || ''}"`);
+      
+      console.log(`Upgrading existing release with merged values to preserve configuration`);
+    } else if (existingRelease.exists) {
       console.log(`✅ EXISTING RELEASE FOUND: ${existingRelease.releaseName} in namespace ${namespace}`);
       console.log(`Release details: ${JSON.stringify(existingRelease.releases[0], null, 2)}`);
       
@@ -263,91 +383,9 @@ router.post('/deploy-from-github', async (req, res) => {
         timestamp: new Date().toISOString(),
         requiresUpgrade: true,
       });
-    }
-    
-    // 准备环境变量
-    const helmEnvVars = {
-      CHART_NAME: chartName, // 确保使用从GitHub URL中提取的repo名称作为chart名称
-      GITHUB_OWNER: owner.toLowerCase(), // 确保传递GitHub所有者信息
-      CHAIN_ID: envVars.chainId || "11155111",
-      ALLOWED_ORIGINS: envVars.allowedOrigins || "*",
-      CHART_PATH: `./helm-charts/${chartName}`,
-      DEPLOY_VALUE: envVars.deployValue || "",
-      REMOTE_VALUE: envVars.remoteValue || "",
-      AUTO_SUBMIT_VALUE: envVars.autoSubmitValue || "",
-      MIGRATE_VALUE: envVars.migrateValue || "",
-      MIGRATE_IMAGE_VALUE: envVars.migrateImageValue || "",
-      IMAGE_VALUE: envVars.imageValue || "",
-      SETTLEMENT_CONTRACT_ADDRESS: envVars.settlementContractAddress || "",
-      RPC_PROVIDER: envVars.rpcProvider || "",
-    };
-    
-    // 准备 Helm 部署的值
-    let values = {
-      config: {
-        app: {
-          customEnv: {}
-        }
-      }
-    };
-    
-    // 添加自定义环境变量，不再使用custom_前缀
-    if (envVars.custom && typeof envVars.custom === 'object') {
-      // 过滤掉值为undefined或null的自定义环境变量
-      const filteredCustomEnvs = Object.entries(envVars.custom)
-        .filter(([_, value]) => value !== undefined && value !== null)
-        .reduce((acc, [key, value]) => {
-          // 直接使用原始键名，不添加前缀
-          acc[key] = value;
-          return acc;
-        }, {});
-      
-      // 将过滤后的自定义环境变量添加到values.config.app.customEnv中，而不是helmEnvVars
-      values.config.app.customEnv = filteredCustomEnvs;
-      
-      console.log(`添加了 ${Object.keys(filteredCustomEnvs).length} 个自定义环境变量到values.config.app.customEnv`);
-      // 打印每个自定义环境变量的名称，帮助调试
-      Object.keys(filteredCustomEnvs).forEach(key => {
-        console.log(`  - 自定义环境变量: ${key}`);
-      });
-    } else {
-      console.log('没有自定义环境变量需要添加');
-    }
-    
-    console.log(`Generating Helm chart with environment variables:`, helmEnvVars);
-    
-    // 生成 Helm chart
-    const { chartPath, tempDir } = await helm.generateHelmChart(helmEnvVars);
-    
-    if (upgradeOnly) {
-      // 如果是升级操作，获取现有release的值
-      const existingValues = await helm.getHelmReleaseValues(releaseName, namespace);
-      
-      // 只更新镜像相关的值，保留其他现有值
-      values = {
-        ...existingValues,
-        image: {
-          repository: `ghcr.io/${owner.toLowerCase()}/${chartName}`,
-          tag: imageTag,
-          pullPolicy: 'Always' // 确保每次都拉取最新镜像
-        },
-        config: {
-          ...(existingValues.config || {}),
-          app: {
-            ...(existingValues.config?.app || {}),
-            ...values.config?.app, // 保留我们之前设置的自定义环境变量
-            // 确保IMAGE_VALUE和MIGRATE_IMAGE_VALUE被正确设置
-            image: envVars.imageValue || existingValues.config?.app?.image || "",
-            migrateImageValue: envVars.migrateImageValue || existingValues.config?.app?.migrateImageValue || ""
-          }
-        }
-      };
-      
-      console.log(`Upgrading existing release with merged values to preserve configuration`);
     } else {
       // 如果是新部署，传递所有值
       values = {
-        ...values, // 保留之前设置的值，包括自定义环境变量
         image: {
           repository: `ghcr.io/${owner.toLowerCase()}/${chartName}`,
           tag: imageTag,
@@ -378,15 +416,15 @@ router.post('/deploy-from-github', async (req, res) => {
           app: {
             ...(values.config?.app || {}),
             // 确保IMAGE_VALUE和MIGRATE_IMAGE_VALUE被正确设置
-            image: envVars.imageValue || "",
-            migrateImageValue: envVars.migrateImageValue || "",
+            image: envVars.imageValue !== undefined ? envVars.imageValue : "",
+            migrateImageValue: envVars.migrateImageValue !== undefined ? envVars.migrateImageValue : "",
             // 设置其他环境变量
-            deploy: envVars.deployValue || "TRUE",
-            remote: envVars.remoteValue || "TRUE",
-            autoSubmit: envVars.autoSubmitValue || "",
-            migrate: envVars.migrateValue || "FALSE",
-            settlementContractAddress: envVars.settlementContractAddress || "",
-            rpcProvider: envVars.rpcProvider || ""
+            deploy: envVars.deployValue !== undefined ? envVars.deployValue : "",
+            remote: envVars.remoteValue !== undefined ? envVars.remoteValue : "",
+            autoSubmit: envVars.autoSubmitValue !== undefined ? envVars.autoSubmitValue : "",
+            migrate: envVars.migrateValue !== undefined ? envVars.migrateValue : "",
+            settlementContractAddress: envVars.settlementContractAddress !== undefined ? envVars.settlementContractAddress : "",
+            rpcProvider: envVars.rpcProvider !== undefined ? envVars.rpcProvider : ""
           }
         }
       };
@@ -423,6 +461,35 @@ router.post('/deploy-from-github', async (req, res) => {
         if (!values.config.app) values.config.app = {};
         values.config.app.customEnv = values.config.app.customEnv || {};
       }
+      
+      // 准备环境变量
+      const helmEnvVars = {
+        CHART_NAME: chartName, // 确保使用从GitHub URL中提取的repo名称作为chart名称
+        GITHUB_OWNER: owner.toLowerCase(), // 确保传递GitHub所有者信息
+        CHAIN_ID: envVars.chainId || "11155111",
+        ALLOWED_ORIGINS: envVars.allowedOrigins || "*",
+        CHART_PATH: `./helm-charts/${chartName}`,
+        DEPLOY_VALUE: envVars.deployValue !== undefined ? envVars.deployValue : "",
+        REMOTE_VALUE: envVars.remoteValue !== undefined ? envVars.remoteValue : "",
+        AUTO_SUBMIT_VALUE: envVars.autoSubmitValue !== undefined ? envVars.autoSubmitValue : "",
+        MIGRATE_VALUE: envVars.migrateValue !== undefined ? envVars.migrateValue : "",
+        MIGRATE_IMAGE_VALUE: envVars.migrateImageValue !== undefined ? envVars.migrateImageValue : "",
+        IMAGE_VALUE: envVars.imageValue !== undefined ? envVars.imageValue : "",
+        SETTLEMENT_CONTRACT_ADDRESS: envVars.settlementContractAddress !== undefined ? envVars.settlementContractAddress : "",
+        RPC_PROVIDER: envVars.rpcProvider !== undefined ? envVars.rpcProvider : "",
+      };
+      
+      // 添加详细日志，跟踪DEPLOY_VALUE的值
+      console.log(`DEPLOY_VALUE in request: "${envVars.deployValue}"`);
+      console.log(`DEPLOY_VALUE type: ${typeof envVars.deployValue}`);
+      console.log(`DEPLOY_VALUE in helmEnvVars: "${helmEnvVars.DEPLOY_VALUE}"`);
+      
+      console.log(`Generating Helm chart with environment variables:`, helmEnvVars);
+      
+      // 生成 Helm chart
+      const { chartPath: generatedChartPath, tempDir: generatedTempDir } = await helm.generateHelmChart(helmEnvVars);
+      chartPath = generatedChartPath;
+      tempDir = generatedTempDir;
     }
     
     // 打印最终的values对象，特别是自定义环境变量部分
@@ -451,7 +518,14 @@ router.post('/deploy-from-github', async (req, res) => {
       console.log(`Deployment completed with image tag: ${actualImageTag} (original: ${originalImageTag})`);
       
       // 清理临时目录
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      if (tempDir) {
+        try {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          console.log(`Cleaned up temporary directory: ${tempDir}`);
+        } catch (cleanupError) {
+          console.warn(`Warning: Failed to clean up temporary directory: ${cleanupError.message}`);
+        }
+      }
       
       const actionType = (upgradeOnly || deployResult.isUpgrade || (deployResult.message && deployResult.message.includes('has been upgraded'))) ? 'upgraded' : 'deployed';
       let ingressStatus = 'created';
@@ -558,6 +632,16 @@ router.post('/deploy-from-github', async (req, res) => {
     } catch (error) {
       console.error(`Error deploying Helm chart: ${error.message}`);
       
+      // 清理临时目录
+      if (tempDir) {
+        try {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          console.log(`Cleaned up temporary directory after error: ${tempDir}`);
+        } catch (cleanupError) {
+          console.warn(`Warning: Failed to clean up temporary directory: ${cleanupError.message}`);
+        }
+      }
+      
       // 如果错误对象中有isUpgrade标志，使用它
       if (error.isUpgrade !== undefined) {
         upgradeOnly = error.isUpgrade;
@@ -575,100 +659,20 @@ router.post('/deploy-from-github', async (req, res) => {
           error.message.includes('connection refused') || 
           error.message.includes('i/o timeout')) {
         errorMessage = `${errorIcon} ${errorAction} FAILED: Network connection error`;
-        errorDetails = 'The operation failed due to network connectivity issues. Please check your connection to the Kubernetes cluster and try again.';
-      }
-      // 检查是否是Ingress冲突
-      else if (error.code === 'INGRESS_CONFLICT') {
-        errorMessage = `${errorIcon} ${errorAction} FAILED: Ingress resource conflict`;
-        errorDetails = `An Ingress with host "${error.details.host}" and path "${error.details.path}" already exists in namespace "${error.details.namespace}". Please check your Ingress configuration.`;
-      } else {
-        errorMessage = `${errorIcon} ${errorAction} FAILED: ${errorMessage}`;
       }
       
-      return res.status(500).json({
+      res.status(500).json({
         success: false,
         error: errorMessage,
-        details: errorDetails,
-        timestamp: new Date().toISOString(),
-        operation: upgradeOnly ? 'Upgrade' : 'Install',
-        operationFailed: true,
-        isUpgrade: upgradeOnly,
-        chartName,
-        namespace,
-        releaseName,
-        failureReason: error.code || 'UNKNOWN_ERROR',
-        suggestions: [
-          upgradeOnly ? 'Try again with a stable network connection' : 'Check your network connection',
-          'Verify that your Kubernetes cluster is accessible',
-          'Check the logs for more detailed error information'
-        ]
+        details: errorDetails
       });
     }
   } catch (error) {
     console.error(`Error processing request: ${error.message}`);
-    
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
-      error: 'Request processing error',
-      details: `An error occurred while processing your deployment request: ${error.message}`,
-      timestamp: new Date().toISOString(),
-      suggestions: [
-        'Check that your GitHub URL is correct',
-        'Ensure the repository has a valid Helm chart structure',
-        'Verify that container images are available in the registry'
-      ]
-    });
-  }
-});
-
-// 清理正在进行中的Helm操作
-router.post('/cleanup-helm-operations', async (req, res) => {
-  try {
-    const { namespace, releaseName } = req.body;
-    
-    if (!namespace) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required parameter: namespace'
-      });
-    }
-    
-    if (!releaseName) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required parameter: releaseName'
-      });
-    }
-    
-    console.log(`Attempting to clean up in-progress operations for release ${releaseName} in namespace ${namespace}`);
-    
-    // 尝试清理正在进行中的操作
-    const cleanupResult = await helm.checkAndCleanHelmOperations(releaseName, namespace);
-    
-    if (cleanupResult) {
-      return res.json({
-        success: true,
-        message: `Successfully cleaned up in-progress operations for release ${releaseName} in namespace ${namespace}`
-      });
-    } else {
-      return res.status(500).json({
-        success: false,
-        error: `Failed to clean up in-progress operations for release ${releaseName} in namespace ${namespace}`,
-        message: 'You may need to manually delete the release using kubectl or helm CLI'
-      });
-    }
-  } catch (error) {
-    console.error(`Error cleaning up Helm operations: ${error.message}`);
-    
-    return res.status(500).json({
-      success: false,
-      error: 'Error cleaning up Helm operations',
-      details: error.message,
-      suggestions: [
-        'Try using helm CLI directly: helm uninstall <release-name> -n <namespace>',
-        'Check if there are any stuck resources using kubectl',
-        'Restart the Kubernetes API server if possible'
-      ]
+      error: 'An error occurred while processing the request',
+      details: error.message
     });
   }
 });

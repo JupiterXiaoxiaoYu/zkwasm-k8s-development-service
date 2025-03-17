@@ -237,11 +237,6 @@ EOL
   echo "创建了包含空customEnv对象的values.yaml文件"
 fi
 
-# 打印values.yaml文件内容，用于调试
-echo "=== values.yaml content ==="
-cat ${CHART_PATH}/values.yaml
-echo "=========================="
-
 # Clean up the temporary file
 rm ${CUSTOM_ENV_FILE}
 
@@ -350,11 +345,6 @@ EOL
 
 # 替换模板中的${CHART_NAME}为实际的CHART_NAME值
 sed "s/\${CHART_NAME}/${CHART_NAME}/g" ${DEPLOYMENT_TEMPLATE} > ${CHART_PATH}/templates/deployment.yaml
-
-# 打印deployment.yaml文件内容，用于调试
-echo "=== deployment.yaml content ==="
-cat ${CHART_PATH}/templates/deployment.yaml
-echo "=============================="
 
 # 清理临时文件
 rm ${DEPLOYMENT_TEMPLATE}
@@ -622,10 +612,10 @@ spec:
               number: {{ .Values.service.port }}
 EOL
 
-mkdir -p ts
+# mkdir -p ts
 
-cat > src/scripts/publish.sh << EOL
-#!/bin/bash
+# cat > src/scripts/publish.sh << EOL
+# #!/bin/bash
 
 # 加载环境变量
 if [ -f .env ]; then
@@ -638,22 +628,22 @@ else
   echo "No .env file found"
 fi
 
-PUBLISH_CMD="node ./node_modules/zkwasm-service-cli/dist/index.js addimage -r \"https://rpc.zkwasmhub.com:8090\" -p \"./node_modules/zkwasm-ts-server/src/application/application_bg.wasm\" -u \"\${USER_ADDRESS}\" -x \"\${USER_PRIVATE_ACCOUNT}\" -d \"Multi User App\" -c 22 --auto_submit_network_ids ${CHAIN_ID} -n \"${CHART_NAME}\" --creator_only_add_prove_task true"
+# PUBLISH_CMD="node ./node_modules/zkwasm-service-cli/dist/index.js addimage -r \"https://rpc.zkwasmhub.com:8090\" -p \"./node_modules/zkwasm-ts-server/src/application/application_bg.wasm\" -u \"\${USER_ADDRESS}\" -x \"\${USER_PRIVATE_ACCOUNT}\" -d \"Multi User App\" -c 22 --auto_submit_network_ids ${CHAIN_ID} -n \"${CHART_NAME}\" --creator_only_add_prove_task true"
 
-if [ "${MIGRATE_VALUE}" = "TRUE" ] || [ "${MIGRATE_VALUE}" = "true" ]; then
-  if [ -n "${MIGRATE_IMAGE_VALUE}" ]; then
-    echo "Migration enabled, adding import_data_image parameter with value: ${MIGRATE_IMAGE_VALUE}"
-    PUBLISH_CMD="\${PUBLISH_CMD} --import_data_image ${MIGRATE_IMAGE_VALUE}"
-  else
-    echo "Warning: Migration is enabled but MIGRATE_IMAGE_VALUE is not set"
-  fi
-fi
+# if [ "${MIGRATE_VALUE}" = "TRUE" ] || [ "${MIGRATE_VALUE}" = "true" ]; then
+#   if [ -n "${MIGRATE_IMAGE_VALUE}" ]; then
+#     echo "Migration enabled, adding import_data_image parameter with value: ${MIGRATE_IMAGE_VALUE}"
+#     PUBLISH_CMD="\${PUBLISH_CMD} --import_data_image ${MIGRATE_IMAGE_VALUE}"
+#   else
+#     echo "Warning: Migration is enabled but MIGRATE_IMAGE_VALUE is not set"
+#   fi
+# fi
 
-# 执行命令
-eval \${PUBLISH_CMD}
-EOL
+# # 执行命令
+# eval \${PUBLISH_CMD}
+# EOL
 
-chmod +x src/scripts/publish.sh
+# chmod +x src/scripts/publish.sh
 
 echo "Helm chart generated successfully at ${CHART_PATH}"
-echo "Publish script generated at src/scripts/publish.sh" 
+# echo "Publish script generated at src/scripts/publish.sh" 

@@ -621,32 +621,32 @@ function processReleases(releases, chartName, namespace) {
 
 // Get values from an existing Helm release
 const getHelmReleaseValues = (releaseName, namespace) => {
-  if (!namespace) {
-    throw new Error('Namespace is required');
-  }
-  
   try {
     console.log(`Getting values for release ${releaseName} in namespace ${namespace}`);
     
-    // 使用helm get values命令获取现有release的值
+    // 使用helm get values命令获取values
     const result = shell.exec(
       `helm get values ${releaseName} --namespace ${namespace} -o json`,
       { silent: true }
     );
     
     if (result.code !== 0) {
-      console.warn(`Failed to get values for release ${releaseName}: ${result.stderr}`);
-      return {};
+      console.error(`Error getting values for release ${releaseName}: ${result.stderr}`);
+      return {}; // 返回空对象，避免后续代码出错
     }
     
-    // 解析结果
-    const values = JSON.parse(result.stdout);
-    console.log(`Retrieved values for release ${releaseName}:`, values);
-    
-    return values;
+    try {
+      const values = JSON.parse(result.stdout);
+      console.log(`Retrieved values for release ${releaseName}:`, values);
+      return values;
+    } catch (parseError) {
+      console.error(`Error parsing values for release ${releaseName}: ${parseError.message}`);
+      console.log(`Raw output:`, result.stdout);
+      return {}; // 返回空对象，避免后续代码出错
+    }
   } catch (error) {
-    console.error(`Error getting values for release ${releaseName}: ${error.message}`);
-    return {};
+    console.error(`Error in getHelmReleaseValues: ${error.message}`);
+    return {}; // 返回空对象，避免后续代码出错
   }
 };
 
