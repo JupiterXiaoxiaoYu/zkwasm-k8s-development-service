@@ -153,138 +153,185 @@ const deployHelmChart = (chartPath, releaseName, namespace, values = {}, upgrade
   }
   
   try {
-    // 检查是否有正在进行中的操作
-    if (upgradeOnly || forceUpgrade) {
-      console.log(`Checking for in-progress operations before deploying ${releaseName}...`);
-      try {
-        // 尝试清理正在进行中的操作
-        const cleanupResult = checkAndCleanHelmOperations(releaseName, namespace);
-        if (cleanupResult) {
-          console.log(`Successfully cleaned up any in-progress operations for ${releaseName}`);
-        } else {
-          console.warn(`Failed to clean up in-progress operations for ${releaseName}, proceeding anyway...`);
+    console.log(`Deploying Helm chart for ${releaseName} in namespace ${namespace}`);
+    
+    // 检查现有的release是否存在
+    const existingRelease = checkReleaseExists(namespace, path.basename(chartPath));
+    const releaseExists = existingRelease.exists;
+    
+    if (releaseExists && upgradeOnly) {
+      console.log(`找到现有的release: ${existingRelease.releaseName}`);
+      
+      // 获取现有release的values
+      const existingValues = getHelmReleaseValues(existingRelease.releaseName, namespace);
+      console.log(`获取到现有release的values`);
+      
+      // 检查是否有PVC定义
+      if (existingValues.persistence || values.persistence) {
+        console.log(`检测到PVC配置，确保保留现有PVC设置`);
+        
+        // 保留现有的persistence配置
+        if (existingValues.persistence && !values.persistence) {
+          values.persistence = existingValues.persistence;
+          console.log(`从现有release复制persistence配置`);
+        } else if (existingValues.persistence && values.persistence) {
+          // 确保不修改关键的PVC字段
+          Object.keys(existingValues.persistence).forEach(key => {
+            if (existingValues.persistence[key] && 
+                typeof existingValues.persistence[key] === 'object' &&
+                existingValues.persistence[key].existingClaim) {
+              // 保留现有的PVC声明
+              if (!values.persistence[key]) {
+                values.persistence[key] = {};
+              }
+              values.persistence[key].existingClaim = existingValues.persistence[key].existingClaim;
+              console.log(`保留现有的PVC声明: ${key}.existingClaim = ${existingValues.persistence[key].existingClaim}`);
+            }
+          });
         }
-      } catch (cleanupError) {
-        console.warn(`Error checking for in-progress operations: ${cleanupError.message}, proceeding anyway...`);
+      }
+      
+      // 检查是否有volumeClaimTemplates定义（用于StatefulSet）
+      if (existingValues.volumeClaimTemplates || values.volumeClaimTemplates) {
+        console.log(`检测到volumeClaimTemplates配置，确保保留现有设置`);
+        
+        // 保留现有的volumeClaimTemplates配置
+        if (existingValues.volumeClaimTemplates && !values.volumeClaimTemplates) {
+          values.volumeClaimTemplates = existingValues.volumeClaimTemplates;
+          console.log(`从现有release复制volumeClaimTemplates配置`);
+        }
+      }
+      
+      // 检查MongoDB特定的PVC配置
+      if ((existingValues.mongodb && existingValues.mongodb.persistence) || 
+          (values.mongodb && values.mongodb.persistence)) {
+        console.log(`检测到MongoDB PVC配置，确保保留现有设置`);
+        
+        // 保留现有的MongoDB persistence配置
+        if (existingValues.mongodb && existingValues.mongodb.persistence) {
+          if (!values.mongodb) values.mongodb = {};
+          values.mongodb.persistence = existingValues.mongodb.persistence;
+          console.log(`从现有release复制MongoDB persistence配置`);
+        }
       }
     }
-    
-    // 打印关键环境变量的值
-    console.log(`Deploying Helm chart with values:`);
-    console.log(`IMAGE_VALUE: "${values.config?.app?.image || ''}"`);
-    console.log(`MIGRATE_IMAGE_VALUE: "${values.config?.app?.migrateImageValue || ''}"`);
     
     // 创建临时值文件
     const tempValuesPath = path.join(os.tmpdir(), `${releaseName}-values.yaml`);
 
-    // 添加一个唯一的时间戳，用于Pod注解
+    // 添加一个唯一的时间戳，用于Pod注解，强制重新拉取镜像
     const timestamp = Math.floor(Date.now() / 1000);
-
-    // 确保values.podAnnotations存在
     if (!values.podAnnotations) {
       values.podAnnotations = {};
     }
-
-    // 添加重启注解，强制Kubernetes重新拉取镜像
     values.podAnnotations['kubectl.kubernetes.io/restartedAt'] = new Date(timestamp * 1000).toISOString();
-    console.log(`Added restart annotation with timestamp: ${timestamp} to force image pull`);
-
+    
     // 确保镜像拉取策略设置为Always
     if (!values.image) {
       values.image = {};
     }
     values.image.pullPolicy = 'Always';
-    console.log(`Ensuring image.pullPolicy is set to Always`);
-
-    // 不再修改镜像标签，使用原始标签
-    if (values.image && values.image.tag) {
-      // 记录使用的原始标签，用于日志和调试
-      const originalTag = values.image.tag;
-      console.log(`Using original image tag: "${originalTag}" without timestamp suffix`);
-    }
-
-    // 将修改后的values写入临时文件
-    fs.writeFileSync(tempValuesPath, yaml.dump(values));
-
-    // 打印临时值文件的内容，用于调试
-    console.log(`临时values.yaml文件内容 (${tempValuesPath}):`);
-    console.log(fs.readFileSync(tempValuesPath, 'utf8'));
     
-    // 构建helm命令，增加超时时间到5分钟
+    // 将values写入临时文件
+    fs.writeFileSync(tempValuesPath, yaml.dump(values));
+    console.log(`创建临时values文件: ${tempValuesPath}`);
+    
+    // 构建基本的helm命令
     let helmCommand;
     
     if (upgradeOnly) {
-      // 只执行upgrade操作，不使用--install标志
-      helmCommand = `helm upgrade ${releaseName} ${chartPath} --values ${tempValuesPath} --namespace ${namespace} --create-namespace --timeout 5m --atomic`;
+      // 只执行upgrade操作
+      helmCommand = `helm upgrade ${releaseName} ${chartPath} --values ${tempValuesPath} --namespace ${namespace} --create-namespace --timeout 5m`;
+      
+      // 如果存在现有release，添加--reuse-values参数
+      if (releaseExists) {
+        helmCommand += ' --reuse-values';
+      }
+      
       console.log(`Upgrading existing release: ${releaseName} in namespace ${namespace}`);
     } else {
-      // 使用upgrade --install组合（默认行为）
-      helmCommand = `helm upgrade --install ${releaseName} ${chartPath} --values ${tempValuesPath} --namespace ${namespace} --create-namespace --timeout 5m --atomic`;
+      // 使用upgrade --install组合
+      helmCommand = `helm upgrade --install ${releaseName} ${chartPath} --values ${tempValuesPath} --namespace ${namespace} --create-namespace --timeout 5m`;
+      
+      // 如果存在现有release，添加--reuse-values参数
+      if (releaseExists) {
+        helmCommand += ' --reuse-values';
+      }
+      
       console.log(`Installing/upgrading release: ${releaseName} in namespace ${namespace}`);
     }
     
     // 如果强制升级，添加--force参数
     if (forceUpgrade) {
       helmCommand += ' --force';
-      console.log(`Force upgrade enabled for release: ${releaseName}`);
     }
-    
-    // 如果强制重启，记录需要重启
-    let needsRestart = forceRestart;
     
     console.log(`Executing Helm command: ${helmCommand}`);
     
-    // 运行 helm upgrade --install 命令
+    // 运行helm命令
     const result = shell.exec(
       helmCommand,
-      { silent: false, timeout: 600000 } // 增加到10分钟超时
+      { silent: false, timeout: 300000 } // 5分钟超时
     );
     
     // 清理临时值文件
     fs.unlinkSync(tempValuesPath);
     
     if (result.code !== 0) {
-      // 检查是否是Ingress冲突错误
+      // 检查是否是PVC不可变错误
       const errorOutput = result.stderr || '';
       
-      // 检查是否是网络连接问题或超时问题
-      if (errorOutput.includes('unexpected EOF') || 
-          errorOutput.includes('connection refused') || 
-          errorOutput.includes('i/o timeout') ||
-          errorOutput.includes('connection reset by peer') ||
-          errorOutput.includes('context deadline exceeded')) {
+      if (errorOutput.includes('PersistentVolumeClaim') && 
+          errorOutput.includes('is invalid: spec: Forbidden: spec is immutable')) {
         
-        console.error(`Network connection or timeout error detected: ${errorOutput}`);
+        console.log(`检测到PVC不可变错误，尝试使用--no-hooks参数重试...`);
         
-        // 尝试重试一次
-        console.log(`Retrying deployment with increased timeout...`);
+        // 创建一个最小化的values文件，只包含必要的更新
+        const minimalValues = {
+          image: values.image,
+          podAnnotations: values.podAnnotations
+        };
         
-        // 构建带有更长超时的命令
-        let retryNetworkCommand = helmCommand.replace(/--timeout \d+m/, '--timeout 15m');
+        // 如果有config.app.image，也包含它
+        if (values.config && values.config.app && values.config.app.image) {
+          if (!minimalValues.config) minimalValues.config = {};
+          if (!minimalValues.config.app) minimalValues.config.app = {};
+          minimalValues.config.app.image = values.config.app.image;
+        }
         
-        // 更新时间戳，确保使用新的重启注解
-        const retryTimestamp = Math.floor(Date.now() / 1000);
+        // 如果有config.app.migrateImageValue，也包含它
+        if (values.config && values.config.app && values.config.app.migrateImageValue) {
+          if (!minimalValues.config) minimalValues.config = {};
+          if (!minimalValues.config.app) minimalValues.config.app = {};
+          minimalValues.config.app.migrateImageValue = values.config.app.migrateImageValue;
+        }
         
-        // 更新values中的重启注解
-        values.podAnnotations['kubectl.kubernetes.io/restartedAt'] = new Date(retryTimestamp * 1000).toISOString();
-        console.log(`Updated restart annotation with new timestamp: ${retryTimestamp} for retry`);
+        const minimalValuesPath = path.join(os.tmpdir(), `${releaseName}-minimal-values.yaml`);
+        fs.writeFileSync(minimalValuesPath, yaml.dump(minimalValues));
         
-        // 重新创建临时值文件，因为之前可能已经删除了
-        fs.writeFileSync(tempValuesPath, yaml.dump(values));
+        console.log(`创建最小化values文件，只包含镜像和注解:`);
+        console.log(fs.readFileSync(minimalValuesPath, 'utf8'));
         
-        console.log(`Retrying with command: ${retryNetworkCommand}`);
+        // 构建新的命令，使用--no-hooks参数
+        let retryCommand = `helm upgrade ${releaseName} ${chartPath} --values ${minimalValuesPath} --namespace ${namespace} --reuse-values --timeout 5m --no-hooks`;
+        
+        if (forceUpgrade) {
+          retryCommand += ' --force';
+        }
+        
+        console.log(`使用--no-hooks参数重试: ${retryCommand}`);
         
         // 重试部署
         const retryResult = shell.exec(
-          retryNetworkCommand,
-          { silent: false, timeout: 900000 } // 15分钟超时
+          retryCommand,
+          { silent: false, timeout: 600000 }
         );
         
-        // 再次清理临时值文件
-        fs.unlinkSync(tempValuesPath);
+        // 清理临时值文件
+        fs.unlinkSync(minimalValuesPath);
         
         if (retryResult.code === 0) {
-          console.log(`Retry successful after network issue!`);
+          console.log(`重试成功! 使用--no-hooks参数部署以保留PVC.`);
           
           // 获取永久存储的Helm图表路径
           const projectRoot = path.resolve(__dirname, '../../');
@@ -294,107 +341,37 @@ const deployHelmChart = (chartPath, releaseName, namespace, values = {}, upgrade
             success: true,
             message: retryResult.stdout,
             retried: true,
-            ingressDisabled: helmCommand.includes('ingress.enabled=false') || false,
-            isUpgrade: upgradeOnly || retryResult.stdout.includes('has been upgraded'),
-            permanentChartDir: permanentChartDir // 添加永久存储路径
+            preservedPVC: true,
+            isUpgrade: true,
+            permanentChartDir: permanentChartDir
           };
         } else {
-          console.error(`Retry failed after network issue: ${retryResult.stderr}`);
-          const networkError = new Error(`Network connection error: ${errorOutput}`);
-          networkError.code = 'NETWORK_ERROR';
-          networkError.originalError = errorOutput;
-          networkError.retryAttempted = true;
-          networkError.retryOutput = retryResult.stderr;
-          networkError.isUpgrade = upgradeOnly || retryResult.stdout.includes('has been upgraded');
-          throw networkError;
-        }
-      }
-      
-      if (errorOutput.includes('admission webhook') && 
-          errorOutput.includes('denied the request') && 
-          errorOutput.includes('is already defined in ingress')) {
-        
-        // 提取冲突的主机和路径信息
-        const hostMatch = errorOutput.match(/host "([^"]+)" and path "([^"]+)" is already defined in ingress ([^\/]+)\/([^\s]+)/);
-        let conflictInfo = {};
-        
-        if (hostMatch && hostMatch.length >= 5) {
-          conflictInfo = {
-            host: hostMatch[1],
-            path: hostMatch[2],
-            namespace: hostMatch[3],
-            ingressName: hostMatch[4]
-          };
+          console.error(`重试失败: ${retryResult.stderr}`);
           
-          // 如果启用了强制升级，尝试使用--set参数禁用Ingress创建并重试
-          if (forceUpgrade) {
-            console.log(`Ingress conflict detected. Retrying with ingress.enabled=false...`);
+          // 如果重试失败，尝试分析Helm chart中的PVC定义
+          console.log(`分析Helm chart中的PVC定义...`);
+          
+          // 检查Helm chart中的PVC定义
+          const chartPvcPath = path.join(chartPath, 'templates');
+          if (fs.existsSync(chartPvcPath)) {
+            console.log(`检查${chartPvcPath}目录中的PVC定义...`);
             
-            // 禁用Ingress
-            values.ingress = {
-              ...(values.ingress || {}),
-              enabled: false
-            };
-            console.log(`Set ingress.enabled=false in values to avoid conflicts with existing Ingress resources`);
-            
-            // 更新时间戳，确保使用新的重启注解
-            const retryTimestamp = Math.floor(Date.now() / 1000);
-            values.podAnnotations['kubectl.kubernetes.io/restartedAt'] = new Date(retryTimestamp * 1000).toISOString();
-            console.log(`Updated restart annotation with new timestamp: ${retryTimestamp} for Ingress conflict retry`);
-            
-            // 重新创建临时值文件，因为之前可能已经删除了
-            fs.writeFileSync(tempValuesPath, yaml.dump(values));
-            
-            // 构建新的helm命令
-            let retryCommand;
-            if (upgradeOnly) {
-              retryCommand = `helm upgrade ${releaseName} ${chartPath} --namespace ${namespace} --values ${tempValuesPath} --create-namespace --timeout 5m`;
-            } else {
-              retryCommand = `helm upgrade --install ${releaseName} ${chartPath} --namespace ${namespace} --create-namespace --values ${tempValuesPath} --timeout 5m`;
-            }
-            
-            if (forceUpgrade) {
-              retryCommand += ' --force';
-            }
-            
-            console.log(`Retrying with command: ${retryCommand}`);
-            
-            // 重试部署
-            const retryResult = shell.exec(
-              retryCommand,
-              { silent: false, timeout: 300000 }
+            // 列出所有模板文件
+            const templateFiles = fs.readdirSync(chartPvcPath);
+            const pvcFiles = templateFiles.filter(file => 
+              file.includes('pvc') || 
+              file.includes('persistentvolumeclaim') || 
+              file.includes('statefulset')
             );
             
-            // 再次清理临时值文件
-            fs.unlinkSync(tempValuesPath);
-            
-            if (retryResult.code === 0) {
-              console.log(`Retry successful! Deployed without creating new Ingress.`);
-              
-              // 获取永久存储的Helm图表路径
-              const projectRoot = path.resolve(__dirname, '../../');
-              const permanentChartDir = path.join(projectRoot, 'helm-charts', path.basename(chartPath));
-              
-              return {
-                success: true,
-                message: retryResult.stdout,
-                retried: true,
-                ingressDisabled: true,
-                isUpgrade: upgradeOnly || retryResult.stdout.includes('has been upgraded'),
-                permanentChartDir: permanentChartDir // 添加永久存储路径
-              };
-            } else {
-              console.error(`Retry failed: ${retryResult.stderr}`);
+            if (pvcFiles.length > 0) {
+              console.log(`找到可能包含PVC定义的文件: ${pvcFiles.join(', ')}`);
+              console.log(`建议: 检查这些文件中的PVC定义，确保它们使用existingClaim或条件渲染`);
             }
           }
+          
+          throw new Error(`使用--no-hooks参数重试失败: ${retryResult.stderr}`);
         }
-        
-        // 抛出特定的错误类型
-        const error = new Error('Ingress conflict detected');
-        error.code = 'INGRESS_CONFLICT';
-        error.details = conflictInfo;
-        error.originalError = errorOutput;
-        throw error;
       }
       
       throw new Error(`Failed to deploy Helm chart: ${result.stderr}`);
@@ -403,164 +380,155 @@ const deployHelmChart = (chartPath, releaseName, namespace, values = {}, upgrade
     // 检查是否是升级操作
     const isUpgradeOperation = upgradeOnly || result.stdout.includes('has been upgraded');
     console.log(`✅ HELM OPERATION SUCCESSFUL: ${isUpgradeOperation ? 'UPGRADE' : 'INSTALL'}`);
-    console.log(`Helm output indicates ${isUpgradeOperation ? 'an upgrade was performed' : 'a new installation was performed'}`);
-    if (result.stdout.includes('has been upgraded')) {
-      console.log(`Detected 'has been upgraded' in Helm output, marking as upgrade operation`);
-    }
     
-    // 如果需要重启Pod，执行kubectl rollout restart
-    if (needsRestart || isUpgradeOperation) {
-      try {
-        console.log(`Forcing pod restart for deployment in namespace ${namespace} with release ${releaseName}...`);
-        
-        // 使用kubectl获取与release相关的所有deployment
-        const deploymentsResult = shell.exec(
-          `kubectl get deployment -n ${namespace} -l app.kubernetes.io/instance=${releaseName} -o name`,
-          { silent: true }
-        );
-        
-        if (deploymentsResult.code === 0 && deploymentsResult.stdout.trim()) {
-          const deployments = deploymentsResult.stdout.trim().split('\n');
-          console.log(`Found ${deployments.length} deployments to restart: ${deployments.join(', ')}`);
-          
-          // 对每个deployment执行rollout restart
-          for (const deployment of deployments) {
-            console.log(`Restarting ${deployment}...`);
-            const restartResult = shell.exec(
-              `kubectl rollout restart ${deployment} -n ${namespace}`,
-              { silent: false }
-            );
-            
-            if (restartResult.code === 0) {
-              console.log(`Successfully restarted ${deployment}`);
-            } else {
-              console.warn(`Failed to restart ${deployment}: ${restartResult.stderr}`);
-            }
-          }
-          
-          console.log(`All deployments have been restarted`);
-        } else {
-          console.warn(`No deployments found for release ${releaseName} in namespace ${namespace}`);
-        }
-      } catch (error) {
-        console.error(`Error restarting pods: ${error.message}`);
-        // 继续执行，不中断流程
-      }
+    // 如果需要强制重启Pod，执行kubectl rollout restart
+    if (forceRestart) {
+      restartDeployments(releaseName, namespace);
     }
     
     // 获取永久存储的Helm图表路径
     const projectRoot = path.resolve(__dirname, '../../');
     const permanentChartDir = path.join(projectRoot, 'helm-charts', path.basename(chartPath));
     
-    // 检查 Pod 状态（同步方式）
-    let podImageStatus = { success: true, message: 'Pod status check skipped' };
-    try {
-      // 等待几秒钟，让 Pod 有时间启动
-      console.log(`Waiting 5 seconds for pods to start...`);
-      const waitStartTime = Date.now();
-      while (Date.now() - waitStartTime < 5000) {
-        // 空循环等待
-      }
-      console.log(`Wait completed, checking pod status...`);
-      
-      // 获取与 release 相关的所有 Pod
-      const podsResult = shell.exec(
-        `kubectl get pods -n ${namespace} -l app.kubernetes.io/instance=${releaseName} -o json`,
-        { silent: true, timeout: 10000 }
-      );
-      
-      if (podsResult.code !== 0) {
-        console.warn(`Failed to get pods for release ${releaseName}: ${podsResult.stderr}`);
-        podImageStatus = { success: false, message: `Failed to get pods: ${podsResult.stderr}` };
-      } else {
-        const pods = JSON.parse(podsResult.stdout);
-        if (!pods.items || pods.items.length === 0) {
-          console.warn(`No pods found for release ${releaseName} in namespace ${namespace}`);
-          podImageStatus = { success: false, message: 'No pods found' };
-        } else {
-          console.log(`Found ${pods.items.length} pods for release ${releaseName}`);
-          
-          // 检查每个 Pod 的容器状态
-          const podStatuses = pods.items.map(pod => {
-            const podName = pod.metadata.name;
-            const containerStatuses = pod.status.containerStatuses || [];
-            
-            // 检查是否有容器报告 ImagePullBackOff 或 ErrImagePull 错误
-            const imagePullErrors = containerStatuses.filter(status => 
-              status.state.waiting && 
-              (status.state.waiting.reason === 'ImagePullBackOff' || 
-               status.state.waiting.reason === 'ErrImagePull')
-            );
-            
-            // 检查是否有容器报告已成功拉取镜像
-            const imagePullSuccesses = containerStatuses.filter(status => 
-              status.state.running || 
-              (status.state.waiting && status.state.waiting.reason === 'CrashLoopBackOff')
-            );
-            
-            return {
-              podName,
-              hasImagePullErrors: imagePullErrors.length > 0,
-              hasImagePullSuccesses: imagePullSuccesses.length > 0,
-              containerStatuses: containerStatuses.map(status => ({
-                name: status.name,
-                ready: status.ready,
-                state: status.state,
-                image: status.image
-              }))
-            };
-          });
-          
-          // 检查是否有任何 Pod 报告镜像拉取错误
-          const podsWithImagePullErrors = podStatuses.filter(status => status.hasImagePullErrors);
-          if (podsWithImagePullErrors.length > 0) {
-            console.error(`Found ${podsWithImagePullErrors.length} pods with image pull errors`);
-            podImageStatus = { 
-              success: false, 
-              message: 'Image pull errors detected',
-              podsWithErrors: podsWithImagePullErrors
-            };
-          } else {
-            // 检查是否有任何 Pod 报告已成功拉取镜像
-            const podsWithImagePullSuccesses = podStatuses.filter(status => status.hasImagePullSuccesses);
-            if (podsWithImagePullSuccesses.length > 0) {
-              console.log(`Found ${podsWithImagePullSuccesses.length} pods with successful image pulls`);
-              podImageStatus = { 
-                success: true, 
-                message: 'Image pull successful',
-                podsWithSuccesses: podsWithImagePullSuccesses
-              };
-            } else {
-              console.warn(`No pods reported image pull status for release ${releaseName}`);
-              podImageStatus = { 
-                success: true, 
-                message: 'No image pull status reported',
-                podStatuses
-              };
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error(`Error checking pod image status: ${error.message}`);
-      podImageStatus = { success: false, message: `Error checking pod status: ${error.message}` };
-    }
-    
-    console.log(`Pod image status check result: ${podImageStatus.success ? 'SUCCESS' : 'FAILURE'}`);
-    console.log(`Pod image status message: ${podImageStatus.message}`);
-    
     return {
       success: true,
       message: result.stdout,
-      ingressDisabled: helmCommand.includes('ingress.enabled=false') || false,
       isUpgrade: isUpgradeOperation,
-      podsRestarted: needsRestart || isUpgradeOperation,
-      permanentChartDir: permanentChartDir, // 添加永久存储路径
-      podImageStatus: podImageStatus // 添加 Pod 镜像状态信息
+      permanentChartDir: permanentChartDir
     };
   } catch (error) {
     console.error('Error deploying Helm chart:', error);
     throw error;
+  }
+};
+
+// 直接使用kubectl更新部署，避免修改PVC
+const updateDeploymentsDirectly = (releaseName, namespace, values) => {
+  try {
+    console.log(`尝试直接使用kubectl更新${namespace}命名空间中的${releaseName}部署...`);
+    
+    // 获取与release相关的所有deployment
+    const deploymentsResult = shell.exec(
+      `kubectl get deployment -n ${namespace} -l app.kubernetes.io/instance=${releaseName} -o name`,
+      { silent: true }
+    );
+    
+    if (deploymentsResult.code !== 0 || !deploymentsResult.stdout.trim()) {
+      console.warn(`未找到与${releaseName}相关的部署，无法直接更新`);
+      throw new Error(`未找到与${releaseName}相关的部署`);
+    }
+    
+    const deployments = deploymentsResult.stdout.trim().split('\n');
+    console.log(`找到${deployments.length}个需要更新的部署: ${deployments.join(', ')}`);
+    
+    // 提取镜像信息
+    let imageValue = '';
+    if (values.image && values.image.repository) {
+      imageValue = `${values.image.repository}`;
+      if (values.image.tag) {
+        imageValue += `:${values.image.tag}`;
+      }
+    } else if (values.config && values.config.app && values.config.app.image) {
+      imageValue = values.config.app.image;
+    }
+    
+    if (!imageValue) {
+      console.warn(`未找到有效的镜像信息，将只重启部署`);
+    } else {
+      console.log(`将使用镜像: ${imageValue}`);
+    }
+    
+    // 更新每个部署
+    let updateSuccess = false;
+    for (const deployment of deployments) {
+      console.log(`更新部署 ${deployment}...`);
+      
+      // 如果有镜像信息，尝试更新镜像
+      if (imageValue) {
+        // 获取容器名称
+        const containersResult = shell.exec(
+          `kubectl get ${deployment} -n ${namespace} -o jsonpath='{.spec.template.spec.containers[*].name}'`,
+          { silent: true }
+        );
+        
+        if (containersResult.code === 0 && containersResult.stdout.trim()) {
+          const containers = containersResult.stdout.trim().split(' ');
+          console.log(`找到容器: ${containers.join(', ')}`);
+          
+          // 更新第一个容器的镜像
+          const setImageResult = shell.exec(
+            `kubectl set image ${deployment} -n ${namespace} ${containers[0]}=${imageValue}`,
+            { silent: false }
+          );
+          
+          if (setImageResult.code === 0) {
+            console.log(`成功更新${deployment}的镜像`);
+            updateSuccess = true;
+          } else {
+            console.warn(`更新${deployment}的镜像失败: ${setImageResult.stderr}`);
+          }
+        }
+      }
+      
+      // 无论镜像更新是否成功，都重启部署
+      const restartResult = shell.exec(
+        `kubectl rollout restart ${deployment} -n ${namespace}`,
+        { silent: false }
+      );
+      
+      if (restartResult.code === 0) {
+        console.log(`成功重启${deployment}`);
+        updateSuccess = true;
+      } else {
+        console.warn(`重启${deployment}失败: ${restartResult.stderr}`);
+      }
+    }
+    
+    if (!updateSuccess) {
+      throw new Error(`所有部署的更新和重启操作都失败了`);
+    }
+    
+    return {
+      success: true,
+      message: `已通过kubectl直接更新部署，跳过Helm升级以保留PVC`,
+      isUpgrade: true,
+      updatedDirectly: true
+    };
+  } catch (error) {
+    console.error(`直接更新部署失败:`, error);
+    throw new Error(`直接更新部署失败: ${error.message}`);
+  }
+};
+
+// 重启部署的辅助函数
+const restartDeployments = (releaseName, namespace) => {
+  try {
+    console.log(`强制重启${namespace}命名空间中的${releaseName}部署...`);
+    
+    // 使用kubectl获取与release相关的所有deployment
+    const deploymentsResult = shell.exec(
+      `kubectl get deployment -n ${namespace} -l app.kubernetes.io/instance=${releaseName} -o name`,
+      { silent: true }
+    );
+    
+    if (deploymentsResult.code === 0 && deploymentsResult.stdout.trim()) {
+      const deployments = deploymentsResult.stdout.trim().split('\n');
+      console.log(`找到${deployments.length}个需要重启的部署: ${deployments.join(', ')}`);
+      
+      // 对每个deployment执行rollout restart
+      for (const deployment of deployments) {
+        console.log(`重启 ${deployment}...`);
+        shell.exec(
+          `kubectl rollout restart ${deployment} -n ${namespace}`,
+          { silent: false }
+        );
+      }
+    } else {
+      console.warn(`未找到与${releaseName}相关的部署，无法重启`);
+    }
+  } catch (error) {
+    console.warn(`重启部署时出错: ${error.message}`);
+    // 继续执行，不中断流程
   }
 };
 
@@ -624,7 +592,7 @@ const checkReleaseExists = (namespace, chartName) => {
     
     // 获取命名空间中的所有发布
     const result = shell.exec(
-      `helm list --namespace ${namespace} -o json --timeout 2m`,
+      `helm list --namespace ${namespace} -o json`,
       { silent: true, timeout: 120000 } // 添加2分钟超时
     );
     
@@ -637,11 +605,11 @@ const checkReleaseExists = (namespace, chartName) => {
           errorOutput.includes('connection reset by peer')) {
         
         console.warn(`Network connection error when checking releases: ${errorOutput}`);
-        console.log(`Retrying with increased timeout...`);
+        console.log(`Retrying...`);
         
         // 重试一次，增加超时时间
         const retryResult = shell.exec(
-          `helm list --namespace ${namespace} -o json --timeout 5m`,
+          `helm list --namespace ${namespace} -o json`,
           { silent: true, timeout: 300000 } // 5分钟超时
         );
         
