@@ -4,8 +4,6 @@ const fs = require('fs');
 const path = require('path');
 const helm = require('../utils/helm');
 const github = require('../utils/github');
-const crypto = require('crypto');
-const shell = require('shelljs');
 
 // 从 GitHub URL 中提取 owner、repo 和 branch
 function extractGitHubInfo(url) {
