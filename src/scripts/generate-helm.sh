@@ -379,6 +379,15 @@ spec:
           mountPath: /app/uploads
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: http
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
       volumes:
       - name: app-data
         emptyDir: {}
@@ -720,38 +729,50 @@ echo "Helm chart generated successfully at ${CHART_PATH}"
 # echo "Publish script generated at src/scripts/publish.sh"
 
 # 添加 deposit-deployment.yaml 更新版，支持自定义环境变量
-cat > ${CHART_PATH}/templates/deposit-deployment.yaml << EOL
+cat > ${CHART_PATH}/templates/deposit-deployment.yaml << 'EOL'
 {{- if and .Values.miniService.enabled .Values.miniService.depositService.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "${CHART_NAME}.fullname" . }}-deposit
+  name: {{ include "CHART_NAME.fullname" . }}-deposit
   labels:
-    {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    {{- include "CHART_NAME.labels" . | nindent 4 }}
     app.kubernetes.io/component: deposit
 spec:
   replicas: {{ .Values.miniService.depositService.replicaCount }}
   selector:
     matchLabels:
-      {{- include "${CHART_NAME}.selectorLabels" . | nindent 6 }}
+      {{- include "CHART_NAME.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: deposit
   template:
     metadata:
       labels:
-        {{- include "${CHART_NAME}.selectorLabels" . | nindent 8 }}
+        {{- include "CHART_NAME.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: deposit
     spec:
+      # 添加初始化容器检查 RPC 服务是否准备好
+      initContainers:
+      - name: wait-for-rpc
+        image: busybox:1.28
+        command: ['sh', '-c', 'until wget -T 5 -qO- http://{{ include "CHART_NAME.rpcServiceName" . }}:{{ .Values.service.port }}/api/health; do echo waiting for rpc service; sleep 5; done;']
       containers:
         - name: {{ .Chart.Name }}-deposit
           image: "{{ .Values.miniService.image.repository }}:{{ .Values.miniService.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.miniService.image.pullPolicy }}
+          # 添加就绪探针确保服务正常工作
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
           env:
             - name: DEPLOY
               value: "deposit"
             - name: MONGO_URI
-              value: "mongodb://{{ include "${CHART_NAME}.mongodbServiceName" . }}:{{ .Values.config.mongodb.port }}"
+              value: "mongodb://{{ include "CHART_NAME.mongodbServiceName" . }}:{{ .Values.config.mongodb.port }}"
             - name: ZKWASM_RPC_URL
-              value: "http://{{ include "${CHART_NAME}.rpcServiceName" . }}:{{ .Values.service.port }}"
+              value: "http://{{ include "CHART_NAME.rpcServiceName" . }}:{{ .Values.service.port }}"
             - name: SERVER_ADMIN_KEY
               valueFrom:
                 secretKeyRef:
@@ -766,12 +787,10 @@ spec:
               value: "{{ .Values.miniService.environment.rpcProvider | default .Values.config.app.rpcProvider }}"
             - name: CHAIN_ID
               value: "{{ .Values.miniService.environment.chainId | default .Values.config.app.chainId | default "11155111" }}"
-            # 添加自定义环境变量支持
-            {{- if .Values.config.app.customEnv }}
-            # 从主服务的customEnv对象中获取自定义环境变量
-            {{- range $key, $value := .Values.config.app.customEnv }}
+            {{- with .Values.config.app.customEnv }}
+            {{- range $key, $val := . }}
             - name: {{ $key }}
-              value: "{{ $value }}"
+              value: "{{ $val }}"
             {{- end }}
             {{- end }}
           ports:
@@ -795,41 +814,56 @@ spec:
 {{- end }}
 EOL
 
+# 替换模板中的CHART_NAME为实际的CHART_NAME值
+sed -i "s/CHART_NAME/${CHART_NAME}/g" ${CHART_PATH}/templates/deposit-deployment.yaml
+
 # 添加 settlement-deployment.yaml 更新版，支持自定义环境变量
-cat > ${CHART_PATH}/templates/settlement-deployment.yaml << EOL
+cat > ${CHART_PATH}/templates/settlement-deployment.yaml << 'EOL'
 {{- if and .Values.miniService.enabled .Values.miniService.settlementService.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "${CHART_NAME}.fullname" . }}-settlement
+  name: {{ include "CHART_NAME.fullname" . }}-settlement
   labels:
-    {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    {{- include "CHART_NAME.labels" . | nindent 4 }}
     app.kubernetes.io/component: settlement
 spec:
   replicas: {{ .Values.miniService.settlementService.replicaCount }}
   selector:
     matchLabels:
-      {{- include "${CHART_NAME}.selectorLabels" . | nindent 6 }}
+      {{- include "CHART_NAME.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: settlement
   template:
     metadata:
       labels:
-        {{- include "${CHART_NAME}.selectorLabels" . | nindent 8 }}
+        {{- include "CHART_NAME.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: settlement
     spec:
+      # 添加初始化容器检查 RPC 服务是否准备好
+      initContainers:
+      - name: wait-for-rpc
+        image: busybox:1.28
+        command: ['sh', '-c', 'until wget -T 5 -qO- http://{{ include "CHART_NAME.rpcServiceName" . }}:{{ .Values.service.port }}/api/health; do echo waiting for rpc service; sleep 5; done;']
       containers:
         - name: {{ .Chart.Name }}-settlement
           image: "{{ .Values.miniService.image.repository }}:{{ .Values.miniService.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.miniService.image.pullPolicy }}
+          # 添加就绪探针确保服务正常工作
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
           env:
             - name: DEPLOY
               value: "settlement"
             - name: AUTO_SUBMIT
               value: "true"
             - name: MONGO_URI
-              value: "mongodb://{{ include "${CHART_NAME}.mongodbServiceName" . }}:{{ .Values.config.mongodb.port }}"
+              value: "mongodb://{{ include "CHART_NAME.mongodbServiceName" . }}:{{ .Values.config.mongodb.port }}"
             - name: ZKWASM_RPC_URL
-              value: "http://{{ include "${CHART_NAME}.rpcServiceName" . }}:{{ .Values.service.port }}"
+              value: "http://{{ include "CHART_NAME.rpcServiceName" . }}:{{ .Values.service.port }}"
             - name: SERVER_ADMIN_KEY
               valueFrom:
                 secretKeyRef:
@@ -850,12 +884,10 @@ spec:
               value: "{{ .Values.miniService.environment.rpcProvider | default .Values.config.app.rpcProvider }}"
             - name: CHAIN_ID
               value: "{{ .Values.miniService.environment.chainId | default .Values.config.app.chainId | default "11155111" }}"
-            # 添加自定义环境变量支持
-            {{- if .Values.config.app.customEnv }}
-            # 从主服务的customEnv对象中获取自定义环境变量
-            {{- range $key, $value := .Values.config.app.customEnv }}
+            {{- with .Values.config.app.customEnv }}
+            {{- range $key, $val := . }}
             - name: {{ $key }}
-              value: "{{ $value }}"
+              value: "{{ $val }}"
             {{- end }}
             {{- end }}
           ports:
@@ -879,15 +911,18 @@ spec:
 {{- end }}
 EOL
 
+# 替换模板中的CHART_NAME为实际的CHART_NAME值
+sed -i "s/CHART_NAME/${CHART_NAME}/g" ${CHART_PATH}/templates/settlement-deployment.yaml
+
 # 添加 deposit-service.yaml
-cat > ${CHART_PATH}/templates/deposit-service.yaml << EOL
+cat > ${CHART_PATH}/templates/deposit-service.yaml << 'EOL'
 {{- if and .Values.miniService.enabled .Values.miniService.depositService.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "${CHART_NAME}.depositServiceName" . }}
+  name: {{ include "CHART_NAME.depositServiceName" . }}
   labels:
-    {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    {{- include "CHART_NAME.labels" . | nindent 4 }}
     app.kubernetes.io/component: deposit
 spec:
   type: {{ .Values.service.type }}
@@ -897,20 +932,23 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "${CHART_NAME}.selectorLabels" . | nindent 4 }}
+    {{- include "CHART_NAME.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: deposit
 {{- end }}
 EOL
 
+# 替换模板中的CHART_NAME为实际的CHART_NAME值
+sed -i "s/CHART_NAME/${CHART_NAME}/g" ${CHART_PATH}/templates/deposit-service.yaml
+
 # 添加 settlement-service.yaml
-cat > ${CHART_PATH}/templates/settlement-service.yaml << EOL
+cat > ${CHART_PATH}/templates/settlement-service.yaml << 'EOL'
 {{- if and .Values.miniService.enabled .Values.miniService.settlementService.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "${CHART_NAME}.settlementServiceName" . }}
+  name: {{ include "CHART_NAME.settlementServiceName" . }}
   labels:
-    {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    {{- include "CHART_NAME.labels" . | nindent 4 }}
     app.kubernetes.io/component: settlement
 spec:
   type: {{ .Values.service.type }}
@@ -920,7 +958,10 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "${CHART_NAME}.selectorLabels" . | nindent 4 }}
+    {{- include "CHART_NAME.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: settlement
 {{- end }}
-EOL 
+EOL
+
+# 替换模板中的CHART_NAME为实际的CHART_NAME值
+sed -i "s/CHART_NAME/${CHART_NAME}/g" ${CHART_PATH}/templates/settlement-service.yaml 

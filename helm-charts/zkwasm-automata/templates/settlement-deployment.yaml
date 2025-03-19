@@ -1,0 +1,78 @@
+{{- if and .Values.miniService.enabled .Values.miniService.settlementService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zkwasm-automata.fullname" . }}-settlement
+  labels:
+    {{- include "zkwasm-automata.labels" . | nindent 4 }}
+    app.kubernetes.io/component: settlement
+spec:
+  replicas: {{ .Values.miniService.settlementService.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "zkwasm-automata.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: settlement
+  template:
+    metadata:
+      labels:
+        {{- include "zkwasm-automata.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: settlement
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}-settlement
+          image: "{{ .Values.miniService.image.repository }}:{{ .Values.miniService.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.miniService.image.pullPolicy }}
+          env:
+            - name: DEPLOY
+              value: "settlement"
+            - name: AUTO_SUBMIT
+              value: "true"
+            - name: MONGO_URI
+              value: "mongodb://{{ include "zkwasm-automata.mongodbServiceName" . }}:{{ .Values.config.mongodb.port }}"
+            - name: ZKWASM_RPC_URL
+              value: "http://{{ include "zkwasm-automata.rpcServiceName" . }}:{{ .Values.service.port }}"
+            - name: SERVER_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.name }}
+                  key: SERVER_ADMIN_KEY
+                  optional: true
+            - name: SETTLER_PRIVATE_ACCOUNT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.name }}
+                  key: SETTLER_PRIVATE_ACCOUNT
+                  optional: true
+            - name: IMAGE
+              value: "{{ .Values.miniService.environment.image | default .Values.config.app.image }}"
+            - name: SETTLEMENT_CONTRACT_ADDRESS
+              value: "{{ .Values.miniService.environment.settlementContractAddress | default .Values.config.app.settlementContractAddress }}"
+            - name: RPC_PROVIDER
+              value: "{{ .Values.miniService.environment.rpcProvider | default .Values.config.app.rpcProvider }}"
+            - name: CHAIN_ID
+              value: "{{ .Values.miniService.environment.chainId | default .Values.config.app.chainId | default "11155111" }}"
+            {{- with .Values.config.app.customEnv }}
+            {{- range $key, $val := . }}
+            - name: {{ $key }}
+              value: "{{ $val }}"
+            {{- end }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.miniService.settlementService.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

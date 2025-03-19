@@ -6,6 +6,39 @@ image:
   pullPolicy: Always
   tag: "latest"  # Could be latest or MD5 value
 
+# Mini-service configurations (deposit and settlement)
+miniService:
+  enabled: true
+  image:
+    repository: ghcr.io/jupiterxiaoxiaoyu/zkwasm-mini-service
+    pullPolicy: Always
+    tag: "latest"
+  depositService:
+    enabled: true
+    replicaCount: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  settlementService:
+    enabled: true
+    replicaCount: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  environment:
+    image: ""
+    settlementContractAddress: ""
+    rpcProvider: ""
+    chainId: 11155111
+
 ingress:
   enabled: true
   className: nginx  # 使用新的ingressClassName字段
@@ -81,6 +114,14 @@ resources:
   requests:
     cpu: 500m
     memory: 1Gi
+
+# Mini-service secrets configuration
+secrets:
+  create: false
+  name: "app-secrets"
+  # These would be populated during installation
+  # serverAdminKey: ""
+  # settlerPrivateKey: ""
 
 nodeSelector: {}
 tolerations: []
