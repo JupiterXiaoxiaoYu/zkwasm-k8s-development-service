@@ -93,6 +93,22 @@
       <p class="mb-0">These values are used for specific zkWasm operations and are required for certain deployment scenarios.</p>
     </div>
     
+    <div class="alert alert-info mb-4">
+      <h4 class="alert-heading">Mini-Services (Deposit & Settlement)</h4>
+      <p>The deployment can include additional services for token transactions between layers:</p>
+      <ul>
+        <li><strong>Deposit Service</strong>: Handles L1 to L2 token deposits (transfer from Ethereum to rollup)</li>
+        <li><strong>Settlement Service</strong>: Processes L2 to L1 token settlements (transfer from rollup to Ethereum)</li>
+      </ul>
+      <p>These services can be enabled/disabled individually in the advanced options. When enabled, they:</p>
+      <ul>
+        <li>Share the same MongoDB database with the main service</li>
+        <li>Will be deployed as separate pods in the same namespace</li>
+        <li>Require the main RPC service to function properly</li>
+      </ul>
+      <p class="mb-0">For most applications that need token transfers between L1 and L2, both services should be enabled.</p>
+    </div>
+    
     <div class="card mb-4">
       <div class="card-header">
         <h2 class="h5 mb-0">Deploy Application</h2>
@@ -134,6 +150,49 @@
                 Environment Variables
               </div>
               <div class="card-body">
+                <!-- Add MiniService options section -->
+                <div class="row mb-3">
+                  <div class="col-12">
+                    <h5 class="border-bottom pb-2 mb-3">Mini-Service Deployment Options</h5>
+                    <div class="form-check">
+                      <input class="form-check-input" type="checkbox" id="miniServiceEnabled" name="miniServiceEnabled" checked>
+                      <label class="form-check-label" for="miniServiceEnabled">
+                        Enable Mini Services
+                      </label>
+                      <div class="form-text text-muted">
+                        Enable or disable the deployment of additional services (deposit and settlement)
+                      </div>
+                    </div>
+                    
+                    <div id="miniServiceOptions" class="mt-3 ps-4">
+                      <div class="row">
+                        <div class="col-md-6">
+                          <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="depositServiceEnabled" name="depositServiceEnabled" checked>
+                            <label class="form-check-label" for="depositServiceEnabled">
+                              Deploy Deposit Service
+                            </label>
+                            <div class="form-text text-muted">
+                              Service for processing L1 to L2 token deposits
+                            </div>
+                          </div>
+                        </div>
+                        <div class="col-md-6">
+                          <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="settlementServiceEnabled" name="settlementServiceEnabled" checked>
+                            <label class="form-check-label" for="settlementServiceEnabled">
+                              Deploy Settlement Service
+                            </label>
+                            <div class="form-text text-muted">
+                              Service for processing L2 to L1 token settlements
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
                 <div class="row">
                   <div class="col-md-6">
                     <div class="form-group">
@@ -323,6 +382,23 @@
       }
     });
     
+    // 根据miniServiceEnabled的值启用/禁用子选项
+    document.getElementById('miniServiceEnabled').addEventListener('change', function() {
+      const miniServiceOptions = document.getElementById('miniServiceOptions');
+      const depositServiceEnabled = document.getElementById('depositServiceEnabled');
+      const settlementServiceEnabled = document.getElementById('settlementServiceEnabled');
+      
+      if (this.checked) {
+        miniServiceOptions.classList.remove('text-muted');
+        depositServiceEnabled.disabled = false;
+        settlementServiceEnabled.disabled = false;
+      } else {
+        miniServiceOptions.classList.add('text-muted');
+        depositServiceEnabled.disabled = true;
+        settlementServiceEnabled.disabled = true;
+      }
+    });
+    
     // 根据migrateValue的值显示/隐藏migrateImageValue字段
     document.getElementById('migrateValue').addEventListener('change', function() {
       const migrateImageValueField = document.getElementById('migrateImageValue');
@@ -341,12 +417,18 @@
       }
     });
     
-    // 页面加载时初始化migrateImageValue字段状态
+    // 页面加载时初始化状态
     document.addEventListener('DOMContentLoaded', function() {
+      // 初始化 migrateValue 状态
       const migrateValue = document.getElementById('migrateValue');
       if (migrateValue) {
-        // 触发change事件以初始化状态
         migrateValue.dispatchEvent(new Event('change'));
+      }
+      
+      // 初始化 miniServiceEnabled 状态
+      const miniServiceEnabled = document.getElementById('miniServiceEnabled');
+      if (miniServiceEnabled) {
+        miniServiceEnabled.dispatchEvent(new Event('change'));
       }
     });
     
@@ -456,6 +538,13 @@
           rpcProvider: formData.get('rpcProvider')
         };
         
+        // 添加 mini-service 配置
+        data.miniService = {
+          enabled: formData.get('miniServiceEnabled') === 'on',
+          depositServiceEnabled: formData.get('depositServiceEnabled') === 'on',
+          settlementServiceEnabled: formData.get('settlementServiceEnabled') === 'on'
+        };
+        
         // 处理自定义环境变量
         const customEnvVars = formData.get('customEnvVars');
         if (customEnvVars) {
@@ -467,6 +556,13 @@
             return;
           }
         }
+      } else {
+        // 默认设置 mini-service 为启用状态
+        data.miniService = {
+          enabled: true,
+          depositServiceEnabled: true,
+          settlementServiceEnabled: true
+        };
       }
       
       try {

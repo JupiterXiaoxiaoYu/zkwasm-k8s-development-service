@@ -74,7 +74,7 @@ function generateReleaseName(repoName, namespace) {
 // 检查 GitHub 仓库并部署 Helm chart
 router.post('/deploy-from-github', async (req, res) => {
   try {
-    const { githubUrl, namespace, envVars = {}, forceImageTag = false } = req.body;
+    const { githubUrl, namespace, envVars = {}, forceImageTag = false, miniService = {} } = req.body;
     
     if (!githubUrl) {
       return res.status(400).json({
@@ -239,6 +239,15 @@ router.post('/deploy-from-github', async (req, res) => {
         app: {
           customEnv: {}
         }
+      },
+      miniService: {
+        enabled: miniService.enabled !== undefined ? miniService.enabled : true,
+        depositService: {
+          enabled: miniService.depositServiceEnabled !== undefined ? miniService.depositServiceEnabled : true
+        },
+        settlementService: {
+          enabled: miniService.settlementServiceEnabled !== undefined ? miniService.settlementServiceEnabled : true
+        }
       }
     };
     
@@ -349,6 +358,19 @@ router.post('/deploy-from-github', async (req, res) => {
             settlementContractAddress: envVars.settlementContractAddress !== undefined ? envVars.settlementContractAddress : (existingValues.config?.app?.settlementContractAddress || ""),
             rpcProvider: envVars.rpcProvider !== undefined ? envVars.rpcProvider : (existingValues.config?.app?.rpcProvider || "")
           }
+        },
+        // 更新miniService配置，保留现有配置但优先使用用户传入的新设置
+        miniService: {
+          ...(existingValues.miniService || {}),
+          enabled: miniService.enabled !== undefined ? miniService.enabled : (existingValues.miniService?.enabled !== undefined ? existingValues.miniService.enabled : true),
+          depositService: {
+            ...(existingValues.miniService?.depositService || {}),
+            enabled: miniService.depositServiceEnabled !== undefined ? miniService.depositServiceEnabled : (existingValues.miniService?.depositService?.enabled !== undefined ? existingValues.miniService.depositService.enabled : true)
+          },
+          settlementService: {
+            ...(existingValues.miniService?.settlementService || {}),
+            enabled: miniService.settlementServiceEnabled !== undefined ? miniService.settlementServiceEnabled : (existingValues.miniService?.settlementService?.enabled !== undefined ? existingValues.miniService.settlementService.enabled : true)
+          }
         }
       };
       
@@ -407,6 +429,19 @@ router.post('/deploy-from-github', async (req, res) => {
           repository: `ghcr.io/${owner.toLowerCase()}/${chartName}`,
           tag: imageTag,
           pullPolicy: 'Always'
+        },
+        // 添加miniService配置
+        miniService: {
+          ...values.miniService, // 保留初始配置
+          enabled: miniService.enabled !== undefined ? miniService.enabled : true,
+          depositService: {
+            ...(values.miniService?.depositService || {}),
+            enabled: miniService.depositServiceEnabled !== undefined ? miniService.depositServiceEnabled : true
+          },
+          settlementService: {
+            ...(values.miniService?.settlementService || {}),
+            enabled: miniService.settlementServiceEnabled !== undefined ? miniService.settlementServiceEnabled : true
+          }
         },
         // 确保config.app存在并包含必要的值
         config: {
@@ -613,7 +648,17 @@ router.post('/deploy-from-github', async (req, res) => {
           helmOutput: deployResult.message && deployResult.message.substring(0, 500), // 限制输出长度
           isUpgrade: isUpgradeOperation,
           wasRetried: deployResult.retried || false,
-          helmChartLocation: helmChartLocation // 添加Helm图表位置信息
+          helmChartLocation: helmChartLocation, // 添加Helm图表位置信息
+          // 添加miniService配置信息
+          miniService: {
+            enabled: values.miniService?.enabled,
+            depositService: {
+              enabled: values.miniService?.depositService?.enabled
+            },
+            settlementService: {
+              enabled: values.miniService?.settlementService?.enabled
+            }
+          }
         },
         upgradePerformed: isUpgradeOperation,
         upgradeInfo: isUpgradeOperation ? {

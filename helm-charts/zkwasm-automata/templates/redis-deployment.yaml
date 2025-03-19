@@ -1,0 +1,24 @@
+{{- if .Values.config.redis.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zkwasm-automata.fullname" . }}-redis
+  labels:
+    {{- include "zkwasm-automata.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "zkwasm-automata.fullname" . }}-redis
+  template:
+    metadata:
+      labels:
+        app: {{ include "zkwasm-automata.fullname" . }}-redis
+    spec:
+      containers:
+      - name: redis
+        image: "{{ .Values.config.redis.image.repository }}:{{ .Values.config.redis.image.tag }}"
+        ports:
+        - containerPort: {{ .Values.config.redis.port }}
+        resources:
+          {{- toYaml .Values.config.redis.resources | nindent 10 }}
+{{- end }}

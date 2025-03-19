@@ -1,0 +1,29 @@
+{{- if .Values.config.mongodb.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zkwasm-automata.fullname" . }}-mongodb
+  labels:
+    {{- include "zkwasm-automata.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "zkwasm-automata.fullname" . }}-mongodb
+  template:
+    metadata:
+      labels:
+        app: {{ include "zkwasm-automata.fullname" . }}-mongodb
+    spec:
+      containers:
+      - name: mongodb
+        image: "{{ .Values.config.mongodb.image.repository }}:{{ .Values.config.mongodb.image.tag }}"
+        ports:
+        - containerPort: {{ .Values.config.mongodb.port }}
+        volumeMounts:
+        - name: mongodb-data
+          mountPath: /data/db
+      volumes:
+      - name: mongodb-data
+        persistentVolumeClaim:
+          claimName: {{ include "zkwasm-automata.fullname" . }}-mongodb-pvc
+{{- end }}

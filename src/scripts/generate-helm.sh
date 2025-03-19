@@ -96,6 +96,39 @@ image:
   pullPolicy: Always
   tag: "latest"  # Could be latest or MD5 value
 
+# Mini-service configurations (deposit and settlement)
+miniService:
+  enabled: true
+  image:
+    repository: ghcr.io/jupiterxiaoxiaoyu/zkwasm-mini-service
+    pullPolicy: Always
+    tag: "latest"
+  depositService:
+    enabled: true
+    replicaCount: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  settlementService:
+    enabled: true
+    replicaCount: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  environment:
+    image: "${IMAGE_VALUE}"
+    settlementContractAddress: "${SETTLEMENT_CONTRACT_ADDRESS}"
+    rpcProvider: "${RPC_PROVIDER}"
+    chainId: ${CHAIN_ID}
+
 ingress:
   enabled: true
   className: nginx  # 使用新的ingressClassName字段
@@ -170,6 +203,14 @@ resources:
   requests:
     cpu: 500m
     memory: 1Gi
+
+# Mini-service secrets configuration
+secrets:
+  create: false
+  name: "app-secrets"
+  # These would be populated during installation
+  # serverAdminKey: ""
+  # settlerPrivateKey: ""
 
 nodeSelector: {}
 tolerations: []
@@ -645,5 +686,241 @@ fi
 
 # chmod +x src/scripts/publish.sh
 
+# 创建一个简化版的辅助模板
+cat > ${CHART_PATH}/templates/_helpers-services.tpl << EOL
+{{- define "${CHART_NAME}.rpcServiceName" -}}
+{{ include "${CHART_NAME}.fullname" . }}-rpc
+{{- end -}}
+
+{{- define "${CHART_NAME}.mongodbServiceName" -}}
+{{ include "${CHART_NAME}.fullname" . }}-mongodb
+{{- end -}}
+
+{{- define "${CHART_NAME}.redisServiceName" -}}
+{{ include "${CHART_NAME}.fullname" . }}-redis
+{{- end -}}
+
+{{- define "${CHART_NAME}.merkleServiceName" -}}
+{{ include "${CHART_NAME}.fullname" . }}-merkle
+{{- end -}}
+
+{{- define "${CHART_NAME}.depositServiceName" -}}
+{{ include "${CHART_NAME}.fullname" . }}-deposit
+{{- end -}}
+
+{{- define "${CHART_NAME}.settlementServiceName" -}}
+{{ include "${CHART_NAME}.fullname" . }}-settlement
+{{- end -}}
+EOL
+
+# 不需要复杂的_find-service.tpl文件，可以删除它
+# rm -f ${CHART_PATH}/templates/_find-service.tpl
+
 echo "Helm chart generated successfully at ${CHART_PATH}"
-# echo "Publish script generated at src/scripts/publish.sh" 
+# echo "Publish script generated at src/scripts/publish.sh"
+
+# 添加 deposit-deployment.yaml 更新版，支持自定义环境变量
+cat > ${CHART_PATH}/templates/deposit-deployment.yaml << EOL
+{{- if and .Values.miniService.enabled .Values.miniService.depositService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "${CHART_NAME}.fullname" . }}-deposit
+  labels:
+    {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    app.kubernetes.io/component: deposit
+spec:
+  replicas: {{ .Values.miniService.depositService.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "${CHART_NAME}.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: deposit
+  template:
+    metadata:
+      labels:
+        {{- include "${CHART_NAME}.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: deposit
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}-deposit
+          image: "{{ .Values.miniService.image.repository }}:{{ .Values.miniService.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.miniService.image.pullPolicy }}
+          env:
+            - name: DEPLOY
+              value: "deposit"
+            - name: MONGO_URI
+              value: "mongodb://{{ include "${CHART_NAME}.mongodbServiceName" . }}:{{ .Values.config.mongodb.port }}"
+            - name: ZKWASM_RPC_URL
+              value: "http://{{ include "${CHART_NAME}.rpcServiceName" . }}:{{ .Values.service.port }}"
+            - name: SERVER_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.name }}
+                  key: SERVER_ADMIN_KEY
+                  optional: true
+            - name: IMAGE
+              value: "{{ .Values.miniService.environment.image | default .Values.config.app.image }}"
+            - name: SETTLEMENT_CONTRACT_ADDRESS
+              value: "{{ .Values.miniService.environment.settlementContractAddress | default .Values.config.app.settlementContractAddress }}"
+            - name: RPC_PROVIDER
+              value: "{{ .Values.miniService.environment.rpcProvider | default .Values.config.app.rpcProvider }}"
+            - name: CHAIN_ID
+              value: "{{ .Values.miniService.environment.chainId | default .Values.config.app.chainId | default "11155111" }}"
+            # 添加自定义环境变量支持
+            {{- if .Values.config.app.customEnv }}
+            # 从主服务的customEnv对象中获取自定义环境变量
+            {{- range $key, $value := .Values.config.app.customEnv }}
+            - name: {{ $key }}
+              value: "{{ $value }}"
+            {{- end }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.miniService.depositService.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+EOL
+
+# 添加 settlement-deployment.yaml 更新版，支持自定义环境变量
+cat > ${CHART_PATH}/templates/settlement-deployment.yaml << EOL
+{{- if and .Values.miniService.enabled .Values.miniService.settlementService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "${CHART_NAME}.fullname" . }}-settlement
+  labels:
+    {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    app.kubernetes.io/component: settlement
+spec:
+  replicas: {{ .Values.miniService.settlementService.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "${CHART_NAME}.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: settlement
+  template:
+    metadata:
+      labels:
+        {{- include "${CHART_NAME}.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: settlement
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}-settlement
+          image: "{{ .Values.miniService.image.repository }}:{{ .Values.miniService.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.miniService.image.pullPolicy }}
+          env:
+            - name: DEPLOY
+              value: "settlement"
+            - name: AUTO_SUBMIT
+              value: "true"
+            - name: MONGO_URI
+              value: "mongodb://{{ include "${CHART_NAME}.mongodbServiceName" . }}:{{ .Values.config.mongodb.port }}"
+            - name: ZKWASM_RPC_URL
+              value: "http://{{ include "${CHART_NAME}.rpcServiceName" . }}:{{ .Values.service.port }}"
+            - name: SERVER_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.name }}
+                  key: SERVER_ADMIN_KEY
+                  optional: true
+            - name: SETTLER_PRIVATE_ACCOUNT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.name }}
+                  key: SETTLER_PRIVATE_ACCOUNT
+                  optional: true
+            - name: IMAGE
+              value: "{{ .Values.miniService.environment.image | default .Values.config.app.image }}"
+            - name: SETTLEMENT_CONTRACT_ADDRESS
+              value: "{{ .Values.miniService.environment.settlementContractAddress | default .Values.config.app.settlementContractAddress }}"
+            - name: RPC_PROVIDER
+              value: "{{ .Values.miniService.environment.rpcProvider | default .Values.config.app.rpcProvider }}"
+            - name: CHAIN_ID
+              value: "{{ .Values.miniService.environment.chainId | default .Values.config.app.chainId | default "11155111" }}"
+            # 添加自定义环境变量支持
+            {{- if .Values.config.app.customEnv }}
+            # 从主服务的customEnv对象中获取自定义环境变量
+            {{- range $key, $value := .Values.config.app.customEnv }}
+            - name: {{ $key }}
+              value: "{{ $value }}"
+            {{- end }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.miniService.settlementService.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+EOL
+
+# 添加 deposit-service.yaml
+cat > ${CHART_PATH}/templates/deposit-service.yaml << EOL
+{{- if and .Values.miniService.enabled .Values.miniService.depositService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "${CHART_NAME}.depositServiceName" . }}
+  labels:
+    {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    app.kubernetes.io/component: deposit
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "${CHART_NAME}.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: deposit
+{{- end }}
+EOL
+
+# 添加 settlement-service.yaml
+cat > ${CHART_PATH}/templates/settlement-service.yaml << EOL
+{{- if and .Values.miniService.enabled .Values.miniService.settlementService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "${CHART_NAME}.settlementServiceName" . }}
+  labels:
+    {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    app.kubernetes.io/component: settlement
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "${CHART_NAME}.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: settlement
+{{- end }}
+EOL 

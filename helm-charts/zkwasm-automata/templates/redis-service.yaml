@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zkwasm-automata.fullname" . }}-redis
+  labels:
+    {{- include "zkwasm-automata.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.config.redis.port }}
+      targetPort: {{ .Values.config.redis.port }}
+      protocol: TCP
+      name: redis
+  selector:
+    app: {{ include "zkwasm-automata.fullname" . }}-redis

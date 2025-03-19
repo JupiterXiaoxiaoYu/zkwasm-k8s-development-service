@@ -1,0 +1,34 @@
+{{- if .Values.config.merkle.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zkwasm-automata.fullname" . }}-merkle
+  labels:
+    {{- include "zkwasm-automata.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "zkwasm-automata.fullname" . }}-merkle
+  template:
+    metadata:
+      labels:
+        app: {{ include "zkwasm-automata.fullname" . }}-merkle
+    spec:
+      containers:
+      - name: merkle
+        image: "{{ .Values.config.merkle.image.repository }}:{{ .Values.config.merkle.image.tag }}"
+        command: ["./target/release/csm_service"]
+        args: ["--uri", "mongodb://{{ include "zkwasm-automata.fullname" . }}-mongodb:{{ .Values.config.mongodb.port }}"]
+        ports:
+        - containerPort: {{ .Values.config.merkle.port }}
+        env:
+        - name: URI
+          value: mongodb://{{ include "zkwasm-automata.fullname" . }}-mongodb:{{ .Values.config.mongodb.port }}
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+{{- end }}

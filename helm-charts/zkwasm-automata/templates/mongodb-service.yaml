@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zkwasm-automata.fullname" . }}-mongodb
+  labels:
+    {{- include "zkwasm-automata.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.config.mongodb.port }}
+      targetPort: {{ .Values.config.mongodb.port }}
+      protocol: TCP
+      name: mongodb
+  selector:
+    app: {{ include "zkwasm-automata.fullname" . }}-mongodb
