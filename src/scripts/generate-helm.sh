@@ -108,8 +108,8 @@ miniService:
     replicaCount: 1
     resources:
       limits:
-        cpu: 500m
-        memory: 512Mi
+        cpu: 200m
+        memory: 256Mi
       requests:
         cpu: 100m
         memory: 128Mi
@@ -118,10 +118,10 @@ miniService:
     replicaCount: 1
     resources:
       limits:
-        cpu: 500m
-        memory: 512Mi
-      requests:
         cpu: 100m
+        memory: 256Mi
+      requests:
+        cpu: 50m
         memory: 128Mi
   environment:
     image: "${IMAGE_VALUE}"
@@ -171,7 +171,7 @@ config:
     persistence:
       enabled: true
       storageClassName: csi-disk  
-      size: 10Gi
+      size: 20Gi
   redis:
     enabled: true
     image:
@@ -181,10 +181,10 @@ config:
     resources:
       requests:
         memory: "1Gi"
-        cpu: "250m"
+        cpu: "150m"
       limits:
-        memory: "2Gi"
-        cpu: "500m"
+        memory: "1.5Gi"
+        cpu: "200m"
   merkle:
     enabled: true
     image:
