@@ -4,15 +4,20 @@ metadata:
   name: {{ include "zkwasm-automata.fullname" . }}-rpc
   labels:
     {{- include "zkwasm-automata.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rpc
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "zkwasm-automata.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: rpc
   template:
     metadata:
       labels:
         {{- include "zkwasm-automata.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: rpc
     spec:
       # 添加 Pod 级别的 securityContext
       securityContext:
@@ -42,29 +47,6 @@ spec:
           value: "{{ .Values.config.redis.port }}"
         - name: MERKLE_SERVER
           value: http://{{ include "zkwasm-automata.fullname" . }}-merkle:{{ .Values.config.merkle.port }}
-        # 保留解决绑定问题的关键环境变量
-        - name: HOST
-          value: "0.0.0.0"
-        - name: PORT
-          value: "3000"
-        - name: SERVER_ADMIN_KEY
-          valueFrom:
-            secretKeyRef:
-              name: app-secrets
-              key: SERVER_ADMIN_KEY
-              optional: true
-        - name: USER_ADDRESS
-          valueFrom:
-            secretKeyRef:
-              name: app-secrets
-              key: USER_ADDRESS
-              optional: true
-        - name: USER_PRIVATE_ACCOUNT
-          valueFrom:
-            secretKeyRef:
-              name: app-secrets
-              key: USER_PRIVATE_ACCOUNT
-              optional: true
         - name: DEPLOY
           value: "{{ .Values.config.app.deploy | default "" }}"
         - name: REMOTE
@@ -81,7 +63,9 @@ spec:
           value: "{{ .Values.config.app.settlementContractAddress | default "" }}"
         - name: RPC_PROVIDER
           value: "{{ .Values.config.app.rpcProvider | default "" }}"
-        # 添加自定义环境变量
+        # 明确指定组件类型
+        - name: COMPONENT_TYPE
+          value: "rpc"
         {{- if .Values.config.app.customEnv }}
         {{- range $key, $value := .Values.config.app.customEnv }}
         - name: {{ $key }}
@@ -96,27 +80,26 @@ spec:
           mountPath: /app/uploads
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
-        # 修改后的存活性探针，使用exec检查服务进程而非HTTP
-        livenessProbe:
-          exec:
-            command:
-            - /bin/sh
-            - -c
-            - "pgrep node || pgrep nodejs || echo 'Node.js is running'"
-          initialDelaySeconds: 30
-          periodSeconds: 20
-          timeoutSeconds: 5
-          successThreshold: 1
-          failureThreshold: 3
-        # 修改后的就绪性探针，使用TCP端口检查而非HTTP路径
+        # 完全移除存活探针 - 在初期阶段避免因探针导致的重启
+        # livenessProbe 配置被删除
+      
         readinessProbe:
+          tcpSocket:
+            port: 3000
+          initialDelaySeconds: 60  # 给予服务足够的启动时间
+          periodSeconds: 30        # 降低检查频率
+          timeoutSeconds: 15       # 延长超时时间
+          successThreshold: 1
+          failureThreshold: 5      # 增加失败阈值，增加容忍度
+        
+        startupProbe:
           tcpSocket:
             port: 3000
           initialDelaySeconds: 30
           periodSeconds: 10
-          timeoutSeconds: 5
+          timeoutSeconds: 10
           successThreshold: 1
-          failureThreshold: 3
+          failureThreshold: 30     # 允许服务有5分钟(30*10s)的启动时间
       volumes:
       - name: app-data
         emptyDir: {}

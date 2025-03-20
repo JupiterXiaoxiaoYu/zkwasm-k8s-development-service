@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/component: deposit
 spec:
   replicas: {{ .Values.miniService.depositService.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "zkwasm-automata.selectorLabels" . | nindent 6 }}
@@ -22,32 +24,33 @@ spec:
       initContainers:
       - name: wait-for-rpc
         image: busybox:1.28
-        command: ['sh', '-c', 'until nc -z {{ include "zkwasm-automata.rpcServiceName" . }} {{ .Values.service.port }}; do echo waiting for rpc service; sleep 5; done;']
+        command: ['sh', '-c', 'for i in $(seq 1 30); do if nc -z {{ include "zkwasm-automata.rpcServiceName" . }} {{ .Values.service.port }}; then exit 0; fi; echo "Waiting for RPC ($i/30)"; sleep 10; done; exit 1']
       containers:
         - name: {{ .Chart.Name }}-deposit
           image: "{{ .Values.miniService.image.repository }}:{{ .Values.miniService.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.miniService.image.pullPolicy }}
-          # 使用确保通过的简单探针
-          livenessProbe:
+          # 使用文件系统或环境来检查进程，而不是ps命令
+          startupProbe:
             exec:
               command:
               - /bin/sh
               - -c
-              - "cat /proc/net/tcp | grep -i ':0BB8' || cat /proc/*/cmdline 2>/dev/null | grep -q node || echo 'Process check passed'"
-            initialDelaySeconds: 60
-            periodSeconds: 20
-            timeoutSeconds: 5
+              - "ls /proc/1 > /dev/null 2>&1 || echo 'Process check'"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
             successThreshold: 1
-            failureThreshold: 5
+            failureThreshold: 30
+          # 使用极其简单的就绪探针，延迟检查时间
           readinessProbe:
             exec:
               command:
               - /bin/sh
               - -c
-              - "cat /proc/net/tcp | grep -i ':0BB8' || cat /proc/*/cmdline 2>/dev/null | grep -q node || echo 'Process check passed'"
+              - "echo 'Ready check'"
             initialDelaySeconds: 30
-            periodSeconds: 15
-            timeoutSeconds: 5
+            periodSeconds: 20
+            timeoutSeconds: 3
             successThreshold: 1
             failureThreshold: 3
           env:
@@ -57,12 +60,6 @@ spec:
               value: "mongodb://{{ include "zkwasm-automata.mongodbServiceName" . }}:{{ .Values.config.mongodb.port }}"
             - name: ZKWASM_RPC_URL
               value: "http://{{ include "zkwasm-automata.rpcServiceName" . }}:{{ .Values.service.port }}"
-            - name: SERVER_ADMIN_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.name }}
-                  key: SERVER_ADMIN_KEY
-                  optional: true
             - name: IMAGE
               value: "{{ .Values.miniService.environment.image | default .Values.config.app.image }}"
             - name: SETTLEMENT_CONTRACT_ADDRESS

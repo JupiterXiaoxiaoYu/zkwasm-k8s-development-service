@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/component: settlement
 spec:
   replicas: {{ .Values.miniService.settlementService.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "zkwasm-automata.selectorLabels" . | nindent 6 }}
@@ -47,7 +49,7 @@ spec:
               - "cat /proc/net/tcp | grep -i ':0BB8' || cat /proc/*/cmdline 2>/dev/null | grep -q node || echo 'Process check passed'"
             initialDelaySeconds: 30
             periodSeconds: 15
-            timeoutSeconds: 5
+            timeoutSeconds: 3
             successThreshold: 1
             failureThreshold: 3
           env:
@@ -59,18 +61,6 @@ spec:
               value: "mongodb://{{ include "zkwasm-automata.mongodbServiceName" . }}:{{ .Values.config.mongodb.port }}"
             - name: ZKWASM_RPC_URL
               value: "http://{{ include "zkwasm-automata.rpcServiceName" . }}:{{ .Values.service.port }}"
-            - name: SERVER_ADMIN_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.name }}
-                  key: SERVER_ADMIN_KEY
-                  optional: true
-            - name: SETTLER_PRIVATE_ACCOUNT
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.name }}
-                  key: SETTLER_PRIVATE_ACCOUNT
-                  optional: true
             - name: IMAGE
               value: "{{ .Values.miniService.environment.image | default .Values.config.app.image }}"
             - name: SETTLEMENT_CONTRACT_ADDRESS

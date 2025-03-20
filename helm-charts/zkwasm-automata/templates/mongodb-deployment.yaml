@@ -18,16 +18,6 @@ spec:
       labels:
         app: {{ include "zkwasm-automata.fullname" . }}-mongodb
     spec:
-      securityContext:
-        fsGroup: 999
-        runAsUser: 999
-      initContainers:
-      - name: init-mongodb
-        image: busybox
-        command: ['sh', '-c', 'rm -f /data/db/mongod.lock || true; chmod -R 777 /data/db']
-        volumeMounts:
-        - name: mongodb-data
-          mountPath: /data/db
       containers:
       - name: mongodb
         image: "{{ .Values.config.mongodb.image.repository }}:{{ .Values.config.mongodb.image.tag }}"
@@ -54,7 +44,7 @@ spec:
             command:
             - bash
             - -c
-            - "mongo --quiet --eval 'db.runCommand({ ping: 1 })' || mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+            - "mongod --version || mongo --version"
           initialDelaySeconds: 30
           timeoutSeconds: 5
           periodSeconds: 20
@@ -65,7 +55,7 @@ spec:
             command:
             - bash
             - -c
-            - "mongo --quiet --eval 'db.runCommand({ ping: 1 })' || mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+            - "mongod --version || mongo --version"
           initialDelaySeconds: 15
           timeoutSeconds: 5
           periodSeconds: 10

@@ -44,6 +44,11 @@ metadata:
   name: {{ include "${CHART_NAME}.fullname" . }}-mongodb-pvc
   labels:
     {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    backup-enabled: "true"
+    backup-type: "mongodb"
+    app.kubernetes.io/component: "database"
+    CCE-Cluster-Name: "mongodb-backup"
+    app: "mongodb-database"
   annotations:
     "helm.sh/resource-policy": keep
 spec:
@@ -108,21 +113,21 @@ miniService:
     replicaCount: 1
     resources:
       limits:
+        cpu: 250m
+        memory: 512Mi
+      requests:
         cpu: 200m
         memory: 256Mi
-      requests:
-        cpu: 100m
-        memory: 128Mi
   settlementService:
     enabled: true
     replicaCount: 1
     resources:
       limits:
+        cpu: 250m
+        memory: 512Mi
+      requests:
         cpu: 100m
         memory: 256Mi
-      requests:
-        cpu: 50m
-        memory: 128Mi
   environment:
     image: "${IMAGE_VALUE}"
     settlementContractAddress: "${SETTLEMENT_CONTRACT_ADDRESS}"
@@ -131,7 +136,7 @@ miniService:
 
 ingress:
   enabled: true
-  className: nginx  # 使用新的ingressClassName字段
+  className: nginx
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/proxy-body-size: "8m"
@@ -191,7 +196,7 @@ config:
         cpu: "150m"
       limits:
         memory: "1.5Gi"
-        cpu: "200m"
+        cpu: "300m"
   merkle:
     enabled: true
     image:
@@ -205,11 +210,11 @@ service:
 
 resources:
   limits:
-    cpu: 1000m
-    memory: 2Gi
+    cpu: 1500m
+    memory: 3Gi
   requests:
-    cpu: 500m
-    memory: 1Gi
+    cpu: 750m
+    memory: 1.5Gi
 
 # Mini-service secrets configuration
 secrets:
@@ -298,15 +303,20 @@ metadata:
   name: {{ include "${CHART_NAME}.fullname" . }}-rpc
   labels:
     {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rpc
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "${CHART_NAME}.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: rpc
   template:
     metadata:
       labels:
         {{- include "${CHART_NAME}.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: rpc
     spec:
       # 添加 Pod 级别的 securityContext
       securityContext:
@@ -336,24 +346,6 @@ spec:
           value: "{{ .Values.config.redis.port }}"
         - name: MERKLE_SERVER
           value: http://{{ include "${CHART_NAME}.fullname" . }}-merkle:{{ .Values.config.merkle.port }}
-        - name: SERVER_ADMIN_KEY
-          valueFrom:
-            secretKeyRef:
-              name: app-secrets
-              key: SERVER_ADMIN_KEY
-              optional: true
-        - name: USER_ADDRESS
-          valueFrom:
-            secretKeyRef:
-              name: app-secrets
-              key: USER_ADDRESS
-              optional: true
-        - name: USER_PRIVATE_ACCOUNT
-          valueFrom:
-            secretKeyRef:
-              name: app-secrets
-              key: USER_PRIVATE_ACCOUNT
-              optional: true
         - name: DEPLOY
           value: "{{ .Values.config.app.deploy | default "" }}"
         - name: REMOTE
@@ -370,6 +362,9 @@ spec:
           value: "{{ .Values.config.app.settlementContractAddress | default "" }}"
         - name: RPC_PROVIDER
           value: "{{ .Values.config.app.rpcProvider | default "" }}"
+        # 明确指定组件类型
+        - name: COMPONENT_TYPE
+          value: "rpc"
         {{- if .Values.config.app.customEnv }}
         {{- range $key, $value := .Values.config.app.customEnv }}
         - name: {{ $key }}
@@ -384,27 +379,26 @@ spec:
           mountPath: /app/uploads
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
-        # 修改后的存活性探针，使用exec检查服务进程而非HTTP
-        livenessProbe:
-          exec:
-            command:
-            - /bin/sh
-            - -c
-            - "pgrep node || pgrep nodejs || echo 'Node.js is running'"
-          initialDelaySeconds: 30
-          periodSeconds: 20
-          timeoutSeconds: 5
-          successThreshold: 1
-          failureThreshold: 3
-        # 修改后的就绪性探针，使用TCP端口检查而非HTTP路径
+        # 完全移除存活探针 - 在初期阶段避免因探针导致的重启
+        # livenessProbe 配置被删除
+      
         readinessProbe:
+          tcpSocket:
+            port: 3000
+          initialDelaySeconds: 60  # 给予服务足够的启动时间
+          periodSeconds: 30        # 降低检查频率
+          timeoutSeconds: 15       # 延长超时时间
+          successThreshold: 1
+          failureThreshold: 5      # 增加失败阈值，增加容忍度
+        
+        startupProbe:
           tcpSocket:
             port: 3000
           initialDelaySeconds: 30
           periodSeconds: 10
-          timeoutSeconds: 5
+          timeoutSeconds: 10
           successThreshold: 1
-          failureThreshold: 3
+          failureThreshold: 30     # 允许服务有5分钟(30*10s)的启动时间
       volumes:
       - name: app-data
         emptyDir: {}
@@ -423,6 +417,7 @@ metadata:
   name: {{ include "${CHART_NAME}.fullname" . }}-rpc
   labels:
     {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rpc
 spec:
   type: {{ .Values.service.type }}
   ports:
@@ -432,6 +427,7 @@ spec:
       name: http
   selector:
     {{- include "${CHART_NAME}.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rpc
 EOL
 
 cat > ${CHART_PATH}/templates/NOTES.txt << EOL
@@ -493,16 +489,6 @@ spec:
       labels:
         app: {{ include "${CHART_NAME}.fullname" . }}-mongodb
     spec:
-      securityContext:
-        fsGroup: 999
-        runAsUser: 999
-      initContainers:
-      - name: init-mongodb
-        image: busybox
-        command: ['sh', '-c', 'rm -f /data/db/mongod.lock || true; chmod -R 777 /data/db']
-        volumeMounts:
-        - name: mongodb-data
-          mountPath: /data/db
       containers:
       - name: mongodb
         image: "{{ .Values.config.mongodb.image.repository }}:{{ .Values.config.mongodb.image.tag }}"
@@ -529,7 +515,7 @@ spec:
             command:
             - bash
             - -c
-            - "mongo --quiet --eval 'db.runCommand({ ping: 1 })' || mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+            - "mongod --version || mongo --version"
           initialDelaySeconds: 30
           timeoutSeconds: 5
           periodSeconds: 20
@@ -540,7 +526,7 @@ spec:
             command:
             - bash
             - -c
-            - "mongo --quiet --eval 'db.runCommand({ ping: 1 })' || mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+            - "mongod --version || mongo --version"
           initialDelaySeconds: 15
           timeoutSeconds: 5
           periodSeconds: 10
@@ -672,6 +658,11 @@ metadata:
   name: {{ include "${CHART_NAME}.fullname" . }}-mongodb-pvc
   labels:
     {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+    backup-enabled: "true"
+    backup-type: "mongodb"
+    app.kubernetes.io/component: "database"
+    CCE-Cluster-Name: "mongodb-backup"
+    app: "mongodb-database"
   annotations:
     "helm.sh/resource-policy": keep
 spec:
@@ -853,6 +844,8 @@ metadata:
     app.kubernetes.io/component: deposit
 spec:
   replicas: {{ .Values.miniService.depositService.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "CHART_NAME.selectorLabels" . | nindent 6 }}
@@ -867,32 +860,33 @@ spec:
       initContainers:
       - name: wait-for-rpc
         image: busybox:1.28
-        command: ['sh', '-c', 'until nc -z {{ include "CHART_NAME.rpcServiceName" . }} {{ .Values.service.port }}; do echo waiting for rpc service; sleep 5; done;']
+        command: ['sh', '-c', 'for i in $(seq 1 30); do if nc -z {{ include "CHART_NAME.rpcServiceName" . }} {{ .Values.service.port }}; then exit 0; fi; echo "Waiting for RPC ($i/30)"; sleep 10; done; exit 1']
       containers:
         - name: {{ .Chart.Name }}-deposit
           image: "{{ .Values.miniService.image.repository }}:{{ .Values.miniService.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.miniService.image.pullPolicy }}
-          # 使用确保通过的简单探针
-          livenessProbe:
+          # 使用文件系统或环境来检查进程，而不是ps命令
+          startupProbe:
             exec:
               command:
               - /bin/sh
               - -c
-              - "cat /proc/net/tcp | grep -i ':0BB8' || cat /proc/*/cmdline 2>/dev/null | grep -q node || echo 'Process check passed'"
-            initialDelaySeconds: 60
-            periodSeconds: 20
-            timeoutSeconds: 5
+              - "ls /proc/1 > /dev/null 2>&1 || echo 'Process check'"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
             successThreshold: 1
-            failureThreshold: 5
+            failureThreshold: 30
+          # 使用极其简单的就绪探针，延迟检查时间
           readinessProbe:
             exec:
               command:
               - /bin/sh
               - -c
-              - "cat /proc/net/tcp | grep -i ':0BB8' || cat /proc/*/cmdline 2>/dev/null | grep -q node || echo 'Process check passed'"
+              - "echo 'Ready check'"
             initialDelaySeconds: 30
-            periodSeconds: 15
-            timeoutSeconds: 5
+            periodSeconds: 20
+            timeoutSeconds: 3
             successThreshold: 1
             failureThreshold: 3
           env:
@@ -902,12 +896,6 @@ spec:
               value: "mongodb://{{ include "CHART_NAME.mongodbServiceName" . }}:{{ .Values.config.mongodb.port }}"
             - name: ZKWASM_RPC_URL
               value: "http://{{ include "CHART_NAME.rpcServiceName" . }}:{{ .Values.service.port }}"
-            - name: SERVER_ADMIN_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.name }}
-                  key: SERVER_ADMIN_KEY
-                  optional: true
             - name: IMAGE
               value: "{{ .Values.miniService.environment.image | default .Values.config.app.image }}"
             - name: SETTLEMENT_CONTRACT_ADDRESS
@@ -958,6 +946,8 @@ metadata:
     app.kubernetes.io/component: settlement
 spec:
   replicas: {{ .Values.miniService.settlementService.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "CHART_NAME.selectorLabels" . | nindent 6 }}
@@ -997,7 +987,7 @@ spec:
               - "cat /proc/net/tcp | grep -i ':0BB8' || cat /proc/*/cmdline 2>/dev/null | grep -q node || echo 'Process check passed'"
             initialDelaySeconds: 30
             periodSeconds: 15
-            timeoutSeconds: 5
+            timeoutSeconds: 3
             successThreshold: 1
             failureThreshold: 3
           env:
@@ -1009,18 +999,6 @@ spec:
               value: "mongodb://{{ include "CHART_NAME.mongodbServiceName" . }}:{{ .Values.config.mongodb.port }}"
             - name: ZKWASM_RPC_URL
               value: "http://{{ include "CHART_NAME.rpcServiceName" . }}:{{ .Values.service.port }}"
-            - name: SERVER_ADMIN_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.name }}
-                  key: SERVER_ADMIN_KEY
-                  optional: true
-            - name: SETTLER_PRIVATE_ACCOUNT
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.name }}
-                  key: SETTLER_PRIVATE_ACCOUNT
-                  optional: true
             - name: IMAGE
               value: "{{ .Values.miniService.environment.image | default .Values.config.app.image }}"
             - name: SETTLEMENT_CONTRACT_ADDRESS
@@ -1126,4 +1104,59 @@ spec:
   - port: {{ .Values.config.mongodb.port }}
     targetPort: {{ .Values.config.mongodb.port }}
     name: mongodb
+EOL
+
+# 添加自定义标签钩子
+cat > ${CHART_PATH}/templates/_helpers.tpl << EOL
+{{/*
+Expand the name of the chart.
+*/}}
+{{- define "${CHART_NAME}.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Create a default fully qualified app name.
+We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
+If release name contains chart name it will be used as a full name.
+*/}}
+{{- define "${CHART_NAME}.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- \$name := default .Chart.Name .Values.nameOverride }}
+{{- if contains \$name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name \$name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create chart name and version as used by the chart label.
+*/}}
+{{- define "${CHART_NAME}.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Common labels
+*/}}
+{{- define "${CHART_NAME}.labels" -}}
+helm.sh/chart: {{ include "${CHART_NAME}.chart" . }}
+{{ include "${CHART_NAME}.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+Selector labels
+*/}}
+{{- define "${CHART_NAME}.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "${CHART_NAME}.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
 EOL

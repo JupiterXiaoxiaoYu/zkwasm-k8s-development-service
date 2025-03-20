@@ -49,14 +49,3 @@ Selector labels
 app.kubernetes.io/name: {{ include "zkwasm-automata.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
-
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "zkwasm-automata.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "zkwasm-automata.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
-{{- end }}

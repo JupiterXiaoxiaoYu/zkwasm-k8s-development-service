@@ -4,6 +4,7 @@ metadata:
   name: {{ include "zkwasm-automata.fullname" . }}-rpc
   labels:
     {{- include "zkwasm-automata.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rpc
 spec:
   type: {{ .Values.service.type }}
   ports:
@@ -13,3 +14,4 @@ spec:
       name: http
   selector:
     {{- include "zkwasm-automata.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rpc

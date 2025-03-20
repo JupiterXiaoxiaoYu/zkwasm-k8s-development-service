@@ -18,21 +18,21 @@ miniService:
     replicaCount: 1
     resources:
       limits:
+        cpu: 250m
+        memory: 512Mi
+      requests:
         cpu: 200m
         memory: 256Mi
-      requests:
-        cpu: 100m
-        memory: 128Mi
   settlementService:
     enabled: true
     replicaCount: 1
     resources:
       limits:
+        cpu: 250m
+        memory: 512Mi
+      requests:
         cpu: 100m
         memory: 256Mi
-      requests:
-        cpu: 50m
-        memory: 128Mi
   environment:
     image: ""
     settlementContractAddress: ""
@@ -41,7 +41,7 @@ miniService:
 
 ingress:
   enabled: true
-  className: nginx  # 使用新的ingressClassName字段
+  className: nginx
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/proxy-body-size: "8m"
@@ -102,7 +102,7 @@ config:
         cpu: "150m"
       limits:
         memory: "1.5Gi"
-        cpu: "200m"
+        cpu: "300m"
   merkle:
     enabled: true
     image:
@@ -116,11 +116,11 @@ service:
 
 resources:
   limits:
-    cpu: 1000m
-    memory: 2Gi
+    cpu: 1500m
+    memory: 3Gi
   requests:
-    cpu: 500m
-    memory: 1Gi
+    cpu: 750m
+    memory: 1.5Gi
 
 # Mini-service secrets configuration
 secrets:
