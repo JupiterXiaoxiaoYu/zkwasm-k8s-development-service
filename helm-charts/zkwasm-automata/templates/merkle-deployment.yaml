@@ -31,4 +31,25 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "200m"
+        # 添加 TCP 端口检查的就绪性探针
+        readinessProbe:
+          tcpSocket:
+            port: {{ .Values.config.merkle.port }}
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        # 添加基于进程的存活性探针
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - ps aux | grep csm_service | grep -v grep
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
 {{- end }}

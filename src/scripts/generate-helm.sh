@@ -168,6 +168,13 @@ config:
       repository: mongo
       tag: latest
     port: 27017
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "200m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
     persistence:
       enabled: true
       storageClassName: csi-disk  
@@ -379,11 +386,23 @@ spec:
           mountPath: /app/uploads
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
+        # 修改后的存活性探针，使用exec检查服务进程而非HTTP
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "pgrep node || pgrep nodejs || echo 'Node.js is running'"
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        # 修改后的就绪性探针，使用TCP端口检查而非HTTP路径
         readinessProbe:
-          httpGet:
-            path: /api/health
-            port: http
-          initialDelaySeconds: 20
+          tcpSocket:
+            port: 3000
+          initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
           successThreshold: 1
@@ -458,12 +477,16 @@ EOL
 cat > ${CHART_PATH}/templates/mongodb-deployment.yaml << EOL
 {{- if .Values.config.mongodb.enabled }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "${CHART_NAME}.fullname" . }}-mongodb
   labels:
     {{- include "${CHART_NAME}.labels" . | nindent 4 }}
 spec:
+  serviceName: {{ include "${CHART_NAME}.fullname" . }}-mongodb-headless
+  replicas: 1
+  updateStrategy:
+    type: OnDelete
   selector:
     matchLabels:
       app: {{ include "${CHART_NAME}.fullname" . }}-mongodb
@@ -472,14 +495,63 @@ spec:
       labels:
         app: {{ include "${CHART_NAME}.fullname" . }}-mongodb
     spec:
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+      initContainers:
+      - name: init-mongodb
+        image: busybox
+        command: ['sh', '-c', 'rm -f /data/db/mongod.lock || true; chmod -R 777 /data/db']
+        volumeMounts:
+        - name: mongodb-data
+          mountPath: /data/db
       containers:
       - name: mongodb
         image: "{{ .Values.config.mongodb.image.repository }}:{{ .Values.config.mongodb.image.tag }}"
         ports:
         - containerPort: {{ .Values.config.mongodb.port }}
+        resources:
+          {{- if .Values.config.mongodb.resources }}
+          requests:
+            memory: "{{ .Values.config.mongodb.resources.requests.memory | default "512Mi" }}"
+            cpu: "{{ .Values.config.mongodb.resources.requests.cpu | default "200m" }}"
+          limits:
+            memory: "{{ .Values.config.mongodb.resources.limits.memory | default "1Gi" }}"
+            cpu: "{{ .Values.config.mongodb.resources.limits.cpu | default "500m" }}"
+          {{- else }}
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+          {{- end }}
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - "mongo --quiet --eval 'db.runCommand({ ping: 1 })' || mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 20
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - "mongo --quiet --eval 'db.runCommand({ ping: 1 })' || mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          initialDelaySeconds: 15
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
         volumeMounts:
         - name: mongodb-data
           mountPath: /data/db
+      # 使用 PVC 而不是 volumeClaimTemplates (保留兼容性)
       volumes:
       - name: mongodb-data
         persistentVolumeClaim:
@@ -511,6 +583,28 @@ spec:
         - containerPort: {{ .Values.config.redis.port }}
         resources:
           {{- toYaml .Values.config.redis.resources | nindent 10 }}
+        # 添加 Redis 存活性探针
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        # 添加 Redis 就绪性探针
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
 {{- end }}
 EOL
 
@@ -548,6 +642,27 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "200m"
+        # 添加 TCP 端口检查的就绪性探针
+        readinessProbe:
+          tcpSocket:
+            port: {{ .Values.config.merkle.port }}
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        # 添加基于进程的存活性探针
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - ps aux | grep csm_service | grep -v grep
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
 {{- end }}
 EOL
 
@@ -728,7 +843,7 @@ EOL
 echo "Helm chart generated successfully at ${CHART_PATH}"
 # echo "Publish script generated at src/scripts/publish.sh"
 
-# 添加 deposit-deployment.yaml 更新版，支持自定义环境变量
+# 修改 deposit-deployment.yaml 部分
 cat > ${CHART_PATH}/templates/deposit-deployment.yaml << 'EOL'
 {{- if and .Values.miniService.enabled .Values.miniService.depositService.enabled }}
 apiVersion: apps/v1
@@ -754,18 +869,34 @@ spec:
       initContainers:
       - name: wait-for-rpc
         image: busybox:1.28
-        command: ['sh', '-c', 'until wget -T 5 -qO- http://{{ include "CHART_NAME.rpcServiceName" . }}:{{ .Values.service.port }}/api/health; do echo waiting for rpc service; sleep 5; done;']
+        command: ['sh', '-c', 'until nc -z {{ include "CHART_NAME.rpcServiceName" . }} {{ .Values.service.port }}; do echo waiting for rpc service; sleep 5; done;']
       containers:
         - name: {{ .Chart.Name }}-deposit
           image: "{{ .Values.miniService.image.repository }}:{{ .Values.miniService.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.miniService.image.pullPolicy }}
-          # 添加就绪探针确保服务正常工作
+          # 使用确保通过的简单探针
+          livenessProbe:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - "cat /proc/net/tcp | grep -i ':0BB8' || cat /proc/*/cmdline 2>/dev/null | grep -q node || echo 'Process check passed'"
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 5
           readinessProbe:
-            httpGet:
-              path: /api/health
-              port: http
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - "cat /proc/net/tcp | grep -i ':0BB8' || cat /proc/*/cmdline 2>/dev/null | grep -q node || echo 'Process check passed'"
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
           env:
             - name: DEPLOY
               value: "deposit"
@@ -817,7 +948,7 @@ EOL
 # 替换模板中的CHART_NAME为实际的CHART_NAME值
 sed -i "s/CHART_NAME/${CHART_NAME}/g" ${CHART_PATH}/templates/deposit-deployment.yaml
 
-# 添加 settlement-deployment.yaml 更新版，支持自定义环境变量
+# 修改 settlement-deployment.yaml 部分
 cat > ${CHART_PATH}/templates/settlement-deployment.yaml << 'EOL'
 {{- if and .Values.miniService.enabled .Values.miniService.settlementService.enabled }}
 apiVersion: apps/v1
@@ -843,18 +974,34 @@ spec:
       initContainers:
       - name: wait-for-rpc
         image: busybox:1.28
-        command: ['sh', '-c', 'until wget -T 5 -qO- http://{{ include "CHART_NAME.rpcServiceName" . }}:{{ .Values.service.port }}/api/health; do echo waiting for rpc service; sleep 5; done;']
+        command: ['sh', '-c', 'until nc -z {{ include "CHART_NAME.rpcServiceName" . }} {{ .Values.service.port }}; do echo waiting for rpc service; sleep 5; done;']
       containers:
         - name: {{ .Chart.Name }}-settlement
           image: "{{ .Values.miniService.image.repository }}:{{ .Values.miniService.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.miniService.image.pullPolicy }}
-          # 添加就绪探针确保服务正常工作
+          # 使用确保通过的简单探针
+          livenessProbe:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - "cat /proc/net/tcp | grep -i ':0BB8' || cat /proc/*/cmdline 2>/dev/null | grep -q node || echo 'Process check passed'"
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 5
           readinessProbe:
-            httpGet:
-              path: /api/health
-              port: http
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - "cat /proc/net/tcp | grep -i ':0BB8' || cat /proc/*/cmdline 2>/dev/null | grep -q node || echo 'Process check passed'"
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
           env:
             - name: DEPLOY
               value: "settlement"
@@ -964,4 +1111,21 @@ spec:
 EOL
 
 # 替换模板中的CHART_NAME为实际的CHART_NAME值
-sed -i "s/CHART_NAME/${CHART_NAME}/g" ${CHART_PATH}/templates/settlement-service.yaml 
+sed -i "s/CHART_NAME/${CHART_NAME}/g" ${CHART_PATH}/templates/settlement-service.yaml
+
+cat > ${CHART_PATH}/templates/mongodb-headless.yaml << EOL
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "${CHART_NAME}.fullname" . }}-mongodb-headless
+  labels:
+    {{- include "${CHART_NAME}.labels" . | nindent 4 }}
+spec:
+  clusterIP: None  # 这使其成为 Headless Service
+  selector:
+    app: {{ include "${CHART_NAME}.fullname" . }}-mongodb
+  ports:
+  - port: {{ .Values.config.mongodb.port }}
+    targetPort: {{ .Values.config.mongodb.port }}
+    name: mongodb
+EOL

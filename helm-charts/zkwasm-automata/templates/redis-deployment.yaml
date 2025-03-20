@@ -21,4 +21,26 @@ spec:
         - containerPort: {{ .Values.config.redis.port }}
         resources:
           {{- toYaml .Values.config.redis.resources | nindent 10 }}
+        # 添加 Redis 存活性探针
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        # 添加 Redis 就绪性探针
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
 {{- end }}

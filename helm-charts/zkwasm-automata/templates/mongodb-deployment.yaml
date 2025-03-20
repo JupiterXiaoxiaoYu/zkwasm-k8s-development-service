@@ -1,11 +1,15 @@
 {{- if .Values.config.mongodb.enabled }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "zkwasm-automata.fullname" . }}-mongodb
   labels:
     {{- include "zkwasm-automata.labels" . | nindent 4 }}
 spec:
+  serviceName: {{ include "zkwasm-automata.fullname" . }}-mongodb-headless
+  replicas: 1
+  updateStrategy:
+    type: OnDelete
   selector:
     matchLabels:
       app: {{ include "zkwasm-automata.fullname" . }}-mongodb
@@ -14,14 +18,63 @@ spec:
       labels:
         app: {{ include "zkwasm-automata.fullname" . }}-mongodb
     spec:
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+      initContainers:
+      - name: init-mongodb
+        image: busybox
+        command: ['sh', '-c', 'rm -f /data/db/mongod.lock || true; chmod -R 777 /data/db']
+        volumeMounts:
+        - name: mongodb-data
+          mountPath: /data/db
       containers:
       - name: mongodb
         image: "{{ .Values.config.mongodb.image.repository }}:{{ .Values.config.mongodb.image.tag }}"
         ports:
         - containerPort: {{ .Values.config.mongodb.port }}
+        resources:
+          {{- if .Values.config.mongodb.resources }}
+          requests:
+            memory: "{{ .Values.config.mongodb.resources.requests.memory | default "512Mi" }}"
+            cpu: "{{ .Values.config.mongodb.resources.requests.cpu | default "200m" }}"
+          limits:
+            memory: "{{ .Values.config.mongodb.resources.limits.memory | default "1Gi" }}"
+            cpu: "{{ .Values.config.mongodb.resources.limits.cpu | default "500m" }}"
+          {{- else }}
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+          {{- end }}
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - "mongo --quiet --eval 'db.runCommand({ ping: 1 })' || mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 20
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - "mongo --quiet --eval 'db.runCommand({ ping: 1 })' || mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          initialDelaySeconds: 15
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
         volumeMounts:
         - name: mongodb-data
           mountPath: /data/db
+      # 使用 PVC 而不是 volumeClaimTemplates (保留兼容性)
       volumes:
       - name: mongodb-data
         persistentVolumeClaim:
