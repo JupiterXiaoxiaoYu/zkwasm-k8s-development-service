@@ -370,9 +370,7 @@ spec:
           value: "{{ .Values.config.app.settlementContractAddress | default "" }}"
         - name: RPC_PROVIDER
           value: "{{ .Values.config.app.rpcProvider | default "" }}"
-        # 添加自定义环境变量 - 这部分非常重要，确保用户指定的自定义环境变量被注入到容器中
         {{- if .Values.config.app.customEnv }}
-        # 以下是用户指定的自定义环境变量，从values.config.app.customEnv对象中获取
         {{- range $key, $value := .Values.config.app.customEnv }}
         - name: {{ $key }}
           value: "{{ $value }}"
@@ -637,10 +635,10 @@ spec:
           value: mongodb://{{ include "${CHART_NAME}.fullname" . }}-mongodb:{{ .Values.config.mongodb.port }}
         resources:
           requests:
-            memory: "128Mi"
+            memory: "256Mi"
             cpu: "100m"
           limits:
-            memory: "256Mi"
+            memory: "512Mi"
             cpu: "200m"
         # 添加 TCP 端口检查的就绪性探针
         readinessProbe:

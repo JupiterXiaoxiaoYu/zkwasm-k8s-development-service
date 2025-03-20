@@ -42,6 +42,11 @@ spec:
           value: "{{ .Values.config.redis.port }}"
         - name: MERKLE_SERVER
           value: http://{{ include "zkwasm-automata.fullname" . }}-merkle:{{ .Values.config.merkle.port }}
+        # 保留解决绑定问题的关键环境变量
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: "3000"
         - name: SERVER_ADMIN_KEY
           valueFrom:
             secretKeyRef:
@@ -76,9 +81,8 @@ spec:
           value: "{{ .Values.config.app.settlementContractAddress | default "" }}"
         - name: RPC_PROVIDER
           value: "{{ .Values.config.app.rpcProvider | default "" }}"
-        # 添加自定义环境变量 - 这部分非常重要，确保用户指定的自定义环境变量被注入到容器中
+        # 添加自定义环境变量
         {{- if .Values.config.app.customEnv }}
-        # 以下是用户指定的自定义环境变量，从values.config.app.customEnv对象中获取
         {{- range $key, $value := .Values.config.app.customEnv }}
         - name: {{ $key }}
           value: "{{ $value }}"

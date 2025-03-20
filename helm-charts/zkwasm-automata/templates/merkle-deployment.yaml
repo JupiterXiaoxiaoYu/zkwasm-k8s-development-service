@@ -26,10 +26,10 @@ spec:
           value: mongodb://{{ include "zkwasm-automata.fullname" . }}-mongodb:{{ .Values.config.mongodb.port }}
         resources:
           requests:
-            memory: "128Mi"
+            memory: "256Mi"
             cpu: "100m"
           limits:
-            memory: "256Mi"
+            memory: "512Mi"
             cpu: "200m"
         # 添加 TCP 端口检查的就绪性探针
         readinessProbe:
